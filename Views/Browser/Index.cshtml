@@ -1,7 +1,35 @@
 ﻿@using EEBUS.Models
 
+@model string[]
+
 @{
     ViewData["Title"] = "Browse EEBUS Servers";
 }
 
 <h1>@ViewData["Title"]</h1>
+
+ <p>
+    <h3>List of Currently discovered EEBUS nodes:</h3>
+ </p>
+
+<div class="container-fluid browser_connect_container">
+    <ul>
+        @foreach (var node in Model) 
+        {
+            @if (node.StartsWith("Error"))
+            {
+                @node
+            }
+            else
+            {
+                <li>
+                    @node
+                    <form method="post" enctype="multipart/form-data" asp-controller="Browser" asp-action="Connect">
+                        <input name="@node" class="btn btn-primary" type="submit" value="Connect">
+                    </form>
+                    <hr />
+                </li>
+            }
+        }
+    </ul>
+</div>
