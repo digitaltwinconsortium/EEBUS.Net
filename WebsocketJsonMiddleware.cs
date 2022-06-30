@@ -3,7 +3,6 @@ using EEBUS.Models;
 using Microsoft.AspNetCore.Http;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
-using Newtonsoft.Json.Schema;
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
@@ -19,9 +18,8 @@ namespace EEBUS
     public class WebsocketJsonMiddleware
     {
         private readonly RequestDelegate _next;
+        private ConcurrentDictionary<string, EEBUSNode> connectedNodes = new ConcurrentDictionary<string, EEBUSNode>();
 
-        private List<string> knownChargers = new List<string>();
-        private static ConcurrentDictionary<string, Charger> activeCharger = new ConcurrentDictionary<string, Charger>();
 
         public WebsocketJsonMiddleware(RequestDelegate next)
         {
@@ -34,12 +32,12 @@ namespace EEBUS
             {
                 if (httpContext.WebSockets.IsWebSocketRequest)
                 {
-                    await HandleWebsockets(httpContext);
+                    await HandleWebsockets(httpContext).ConfigureAwait(false);
                     return;
                 }
 
                 // passed on to next middleware
-                await _next(httpContext);
+                await _next(httpContext).ConfigureAwait(false);
             }
             catch (Exception ex)
             {
@@ -47,7 +45,7 @@ namespace EEBUS
                 Console.WriteLine(ex.StackTrace);
 
                 httpContext.Response.StatusCode = StatusCodes.Status500InternalServerError;
-                await httpContext.Response.WriteAsync("Something went wrong!!. Please check with the Central system admin");
+                await httpContext.Response.WriteAsync("Error while processing websocket: " + ex.Message).ConfigureAwait(false);
             }
         }
 
@@ -56,47 +54,43 @@ namespace EEBUS
             try
             {
                 string requestPath = httpContext.Request.Path.Value;
-                string chargepointName = requestPath.Split('/').LastOrDefault();
+                string connectedNodeName = requestPath.Split('/').LastOrDefault();
 
-                if (!knownChargers.Contains(chargepointName))
+                if (!await IsProtocolSupported(httpContext, connectedNodeName).ConfigureAwait(false))
                 {
-                    httpContext.Response.StatusCode = StatusCodes.Status404NotFound;
                     return;
                 }
 
-                if (!await IsProtocolSupported(httpContext, chargepointName))
-                    return;
-
-                var socket = await httpContext.WebSockets.AcceptWebSocketAsync(StringConstants.RequiredProtocol);
+                var socket = await httpContext.WebSockets.AcceptWebSocketAsync("ship").ConfigureAwait(false);
 
                 if (socket == null || socket.State != WebSocketState.Open)
                 {
-                    await _next(httpContext);
+                    await _next(httpContext).ConfigureAwait(false);
                     return;
                 }
 
-                if (!activeCharger.ContainsKey(chargepointName))
+                if (!connectedNodes.ContainsKey(connectedNodeName))
                 {
-                    activeCharger.TryAdd(chargepointName, new Charger(chargepointName, socket));
-                    Console.WriteLine($"No. of active chargers : {activeCharger.Count}");
+                    connectedNodes.TryAdd(connectedNodeName, new EEBUSNode(connectedNodeName, socket));
+                    Console.WriteLine($"No. of active connectedNodes : {connectedNodes.Count}");
                 }
                 else
                 {
                     try
                     {
-                        var oldSocket = activeCharger[chargepointName].WebSocket;
-                        activeCharger[chargepointName].WebSocket = socket;
+                        var oldSocket = connectedNodes[connectedNodeName].WebSocket;
+                        connectedNodes[connectedNodeName].WebSocket = socket;
                         if (oldSocket != null)
                         {
-                            Console.WriteLine($"New websocket request received for {chargepointName}");
+                            Console.WriteLine($"New websocket request received for {connectedNodeName}");
                             if (oldSocket != socket && oldSocket.State != WebSocketState.Closed)
                             {
-                                Console.WriteLine($"Closing old websocket for {chargepointName}");
+                                Console.WriteLine($"Closing old websocket for {connectedNodeName}");
 
-                                await oldSocket.CloseOutputAsync(WebSocketCloseStatus.NormalClosure, StringConstants.ClientInitiatedNewWebsocketMessage, CancellationToken.None);
+                                await oldSocket.CloseOutputAsync(WebSocketCloseStatus.NormalClosure, "Client initiated new websocket!", CancellationToken.None).ConfigureAwait(false);
                             }
                         }
-                        Console.WriteLine($"Websocket replaced successfully for {chargepointName}");
+                        Console.WriteLine($"Websocket replaced successfully for {connectedNodeName}");
                     }
                     catch (Exception ex)
                     {
@@ -107,7 +101,7 @@ namespace EEBUS
 
                 if (socket.State == WebSocketState.Open)
                 {
-                    await HandleActiveConnection(socket, chargepointName);
+                    await HandleActiveConnection(socket, connectedNodeName).ConfigureAwait(false);
                 }
             }
             catch (Exception ex)
@@ -117,15 +111,19 @@ namespace EEBUS
             }
         }
 
-        private async Task HandleActiveConnection(WebSocket webSocket, string chargepointName)
+        private async Task HandleActiveConnection(WebSocket webSocket, string connectedNodeName)
         {
             try
             {
                 if (webSocket.State == WebSocketState.Open)
-                    await HandlePayloadsAsync(chargepointName, webSocket);
+                {
+                    await HandlePayloadsAsync(connectedNodeName, webSocket).ConfigureAwait(false);
+                }
 
-                if (webSocket.State != WebSocketState.Open && activeCharger.ContainsKey(chargepointName) && activeCharger[chargepointName].WebSocket == webSocket)
-                    await RemoveConnectionsAsync(chargepointName, webSocket);
+                if (webSocket.State != WebSocketState.Open && connectedNodes.ContainsKey(connectedNodeName) && connectedNodes[connectedNodeName].WebSocket == webSocket)
+                {
+                    await RemoveConnectionsAsync(connectedNodeName, webSocket).ConfigureAwait(false);
+                }
 
             }
             catch (Exception ex)
@@ -135,20 +133,20 @@ namespace EEBUS
             }
         }
 
-        private async Task<bool> IsProtocolSupported(HttpContext httpContext, string chargepointName)
+        private async Task<bool> IsProtocolSupported(HttpContext httpContext, string connectedNodeName)
         {
             string errorMessage = string.Empty;
 
             IList<string> requestedProtocols = httpContext.WebSockets.WebSocketRequestedProtocols;
             if (requestedProtocols.Count == 0)
             {
-                errorMessage = StringConstants.NoProtocolHeaderMessage;
+                errorMessage = "No protocol header message!";
             }
             else
             {
-                if (!requestedProtocols.Contains(StringConstants.RequiredProtocol))
+                if (!requestedProtocols.Contains("ship"))
                 {
-                    errorMessage = StringConstants.SubProtocolNotSupportedMessage;
+                    errorMessage = "Protocol not supported!";
                 }
                 else
                 {
@@ -157,13 +155,13 @@ namespace EEBUS
             }
 
             // request for unsupported protocols are accepted and closed
-            var socket = await httpContext.WebSockets.AcceptWebSocketAsync();
-            await socket.CloseOutputAsync(WebSocketCloseStatus.ProtocolError, errorMessage, CancellationToken.None);
+            var socket = await httpContext.WebSockets.AcceptWebSocketAsync().ConfigureAwait(false);
+            await socket.CloseOutputAsync(WebSocketCloseStatus.ProtocolError, errorMessage, CancellationToken.None).ConfigureAwait(false);
 
             return false;
         }
 
-        private async Task<string> ReceiveDataFromChargerAsync(WebSocket webSocket, string chargepointName)
+        private async Task<string> ReceiveDataFromConnectedNodeAsync(WebSocket webSocket, string connectedNodeName)
         {
             try
             {
@@ -173,20 +171,20 @@ namespace EEBUS
 
                 do
                 {
-                    result = await webSocket.ReceiveAsync(data, CancellationToken.None);
+                    result = await webSocket.ReceiveAsync(data, CancellationToken.None).ConfigureAwait(false);
 
                     if (result.CloseStatus.HasValue)
                     {
-                        if (webSocket != activeCharger[chargepointName].WebSocket)
+                        if (webSocket != connectedNodes[connectedNodeName].WebSocket)
                         {
                             if (webSocket.State != WebSocketState.CloseReceived)
                             {
-                                await webSocket.CloseOutputAsync(WebSocketCloseStatus.NormalClosure, StringConstants.ChargerNewWebRequestMessage, CancellationToken.None);
+                                await webSocket.CloseOutputAsync(WebSocketCloseStatus.NormalClosure, "New web request message", CancellationToken.None).ConfigureAwait(false);
                             }
                         }
                         else
                         {
-                            await RemoveConnectionsAsync(chargepointName, webSocket);
+                            await RemoveConnectionsAsync(connectedNodeName, webSocket).ConfigureAwait(false);
                         }
 
                         return null;
@@ -200,9 +198,9 @@ namespace EEBUS
             }
             catch (WebSocketException websocex)
             {
-                if (webSocket != activeCharger[chargepointName].WebSocket)
+                if (webSocket != connectedNodes[connectedNodeName].WebSocket)
                 {
-                    Console.WriteLine($"WebsocketException occured in the old socket while receiving payload from charger {chargepointName}. Error : {websocex.Message}");
+                    Console.WriteLine($"Websocket exception occured in the old socket while receiving payload from connected node {connectedNodeName}. Error : {websocex.Message}");
                 }
                 else
                 {
@@ -218,22 +216,22 @@ namespace EEBUS
             return null;
         }
 
-        private async Task SendPayloadToChargerAsync(string chargepointName, object payload, WebSocket webSocket)
+        private async Task SendPayloadToConnectedNodeAsync(string connectedNodeName, object payload, WebSocket webSocket)
         {
-            var charger = activeCharger[chargepointName];
+            var connectedNode = connectedNodes[connectedNodeName];
 
             try
             {
-                charger.WebsocketBusy = true;
+                connectedNode.WebsocketBusy = true;
 
-                var settings = new JsonSerializerSettings { DateFormatString = StringConstants.DateTimeFormat, NullValueHandling = NullValueHandling.Ignore };
+                var settings = new JsonSerializerSettings { DateFormatString = "yyyy-MM-ddTHH:mm:ss.fffZ", NullValueHandling = NullValueHandling.Ignore };
                 var serializedPayload = JsonConvert.SerializeObject(payload, settings);
 
                 ArraySegment<byte> data = Encoding.UTF8.GetBytes(serializedPayload);
 
                 if (webSocket.State == WebSocketState.Open)
                 {
-                    await webSocket.SendAsync(data, WebSocketMessageType.Text, true, CancellationToken.None);
+                    await webSocket.SendAsync(data, WebSocketMessageType.Text, true, CancellationToken.None).ConfigureAwait(false);
                 }
             }
             catch (Exception ex)
@@ -242,10 +240,10 @@ namespace EEBUS
                 Console.WriteLine(ex.StackTrace);
             }
 
-            charger.WebsocketBusy = false;
+            connectedNode.WebsocketBusy = false;
         }
 
-        private JArray ProcessPayload(string payloadString, string chargepointName)
+        private JArray ProcessPayload(string payloadString, string connectedNodeName)
         {
             try
             {
@@ -256,7 +254,7 @@ namespace EEBUS
                 }
                 else
                 {
-                    Console.WriteLine($"Null payload received for {chargepointName}");
+                    Console.WriteLine($"Null payload received for {connectedNodeName}");
                 }
             }
             catch (Exception ex)
@@ -268,143 +266,21 @@ namespace EEBUS
             return null;
         }
 
-        private JsonValidationResponse JsonValidation(JObject payload, string action, string chargepointName)
-        {
-            JsonValidationResponse response = new JsonValidationResponse { Valid = false };
-
-            try
-            {
-                if (action != null)
-                {
-                    // Getting Schema FilePath
-                    string currentDirectory = Directory.GetCurrentDirectory();
-                    string filePath = Path.Combine(currentDirectory, "Schemas", $"{action}.json");
-
-                    // Parsing schema
-                    JObject content = JObject.Parse(File.ReadAllText(filePath));
-                    JSchema schema = JSchema.Parse(content.ToString());
-                    JToken json = JToken.Parse(payload.ToString()); // Parsing input payload
-
-                    // Validate json
-                    response = new JsonValidationResponse
-                    {
-                        Valid = json.IsValid(schema, out IList<ValidationError> errors),
-                        Errors = errors.ToList()
-                    };
-
-                }
-                else
-                {
-                    Console.WriteLine("JsonValidation: Action is null");
-                }
-            }
-            catch (FileNotFoundException)
-            {
-                response.CustomErrors = StringConstants.NotImplemented;
-            }
-            catch (JsonReaderException jsre)
-            {
-                Console.WriteLine("Exception: " + jsre.Message);
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine("Exception: " + ex.Message);
-                Console.WriteLine(ex.StackTrace);
-            }
-
-            return response;
-        }
-
-        private Task<JArray> ProcessRequestPayloadAsync(string chargepointName, RequestPayload requestPayload)
-        {
-            string action = string.Empty;
-
-            try
-            {
-                action = requestPayload.Action;
-
-                var isValidPayload = JsonValidation(requestPayload.Payload, action, chargepointName);
-
-                if (isValidPayload.Valid)
-                {
-                    object responsePayload = null;
-                    string url = string.Empty;
-
-                    switch (action)
-                    {
-                        case "Something":
-                            {
-                                object request = requestPayload.Payload.ToObject<object>();
-
-                                object response = new object();
-                                responsePayload = new ResponsePayload(requestPayload.UniqueId, response);
-                                break;
-                            }
-                        default:
-                            {
-                                responsePayload = new ErrorPayload(requestPayload.UniqueId, StringConstants.NotImplemented);
-                                break;
-                            }
-                    }
-
-                    if (responsePayload != null)
-                    {
-                        if (((BasePayload)responsePayload).MessageTypeId == 3)
-                        {
-                            ResponsePayload response = (ResponsePayload)responsePayload;
-                            return Task.FromResult(response.WrappedPayload);
-                        }
-                        else
-                        {
-                            ErrorPayload error = (ErrorPayload)responsePayload;
-                            return Task.FromResult(error.WrappedPayload);
-                        }
-                    }
-
-                }
-                else
-                {
-                    ErrorPayload errorPayload = new ErrorPayload(requestPayload.UniqueId);
-                    GetErrorPayload(isValidPayload, errorPayload);
-                    return Task.FromResult(errorPayload.WrappedPayload);
-                }
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine("Exception: " + ex.Message);
-                Console.WriteLine(ex.StackTrace);
-            }
-
-            return null;
-        }
-
-        private async Task ProcessResponsePayloadAsync(string chargepointName, ResponsePayload responsePayload)
-        {
-            //Placeholder to process response payloads from charger for CentralSystem initiated commands
-            await Task.Delay(1000);
-        }
-
-        private async Task ProcessErrorPayloadAsync(string chargepointName, ErrorPayload errorPayload)
-        {
-            //Placeholder to process error payloads from charger for CentralSystem initiated commands
-            await Task.Delay(1000);
-        }
-
-        private async Task RemoveConnectionsAsync(string chargepointName, WebSocket webSocket)
+        private async Task RemoveConnectionsAsync(string connectedNodeName, WebSocket webSocket)
         {
             try
             {
-                if (activeCharger.TryRemove(chargepointName, out Charger charger))
+                if (connectedNodes.TryRemove(connectedNodeName, out EEBUSNode connectedNode))
                 {
-                    Console.WriteLine($"Removed charger {chargepointName}");
+                    Console.WriteLine($"Removed connected node {connectedNodeName}");
                 }
                 else
                 {
-                    Console.WriteLine($"Cannot remove charger {chargepointName}");
+                    Console.WriteLine($"Cannot remove connected node {connectedNodeName}");
                 }
 
-                await webSocket.CloseOutputAsync(WebSocketCloseStatus.NormalClosure, StringConstants.ClientRequestedClosureMessage, CancellationToken.None);
-                Console.WriteLine($"Closed websocket for charger {chargepointName}. Remaining active chargers : {activeCharger.Count}");
+                await webSocket.CloseOutputAsync(WebSocketCloseStatus.NormalClosure, "Client requested closure!", CancellationToken.None).ConfigureAwait(false);
+                Console.WriteLine($"Closed websocket for connectedNode {connectedNodeName}. Remaining active connectedNodes : {connectedNodes.Count}");
 
             }
             catch (Exception ex)
@@ -414,88 +290,24 @@ namespace EEBUS
             }
         }
 
-        private void GetErrorPayload(JsonValidationResponse response, ErrorPayload errorPayload)
-        {
-            if (response.Errors != null)
-                errorPayload.Payload = JObject.FromObject(new { Error = response.Errors });
-            else
-                errorPayload.Payload = JObject.FromObject(new object());
-
-            errorPayload.ErrorDescription = string.Empty;
-
-            if (response.CustomErrors != null)
-            {
-                errorPayload.ErrorCode = "NotImplemented";
-            }
-            else if (response.Errors == null || response.Errors.Count > 1)
-            {
-                errorPayload.ErrorCode = "GenericError";
-            }
-            else
-            {
-                switch (response.Errors[0].ErrorType)
-                {
-
-                    case ErrorType.MultipleOf:
-                    case ErrorType.Enum:
-                        errorPayload.ErrorCode = "PropertyConstraintViolation";
-                        break;
-
-                    case ErrorType.Required:
-                    case ErrorType.Format:
-                    case ErrorType.AdditionalProperties:
-                        errorPayload.ErrorCode = "FormationViolation";
-                        break;
-
-                    case ErrorType.Type:
-                        errorPayload.ErrorCode = "TypeConstraintViolation";
-                        break;
-
-                    default:
-                        errorPayload.ErrorCode = "GenericError";
-                        break;
-                }
-            }
-        }
-
-        private async Task HandlePayloadsAsync(string chargepointName, WebSocket webSocket)
+        private async Task HandlePayloadsAsync(string connectedNodeName, WebSocket webSocket)
         {
             while (webSocket.State == WebSocketState.Open)
             {
                 try
                 {
-                    string payloadString = await ReceiveDataFromChargerAsync(webSocket, chargepointName);
-                    var payload = ProcessPayload(payloadString, chargepointName);
+                    string payloadString = await ReceiveDataFromConnectedNodeAsync(webSocket, connectedNodeName).ConfigureAwait(false);
+                    var payload = ProcessPayload(payloadString, connectedNodeName);
 
                     if (payload != null)
                     {
                         JArray response = null;
 
-                        //switching based on messageTypeId
-                        switch ((int)payload[0])
-                        {
-                            case 2:
-                                RequestPayload requestPayload = new RequestPayload(payload);
-                                response = await ProcessRequestPayloadAsync(chargepointName, requestPayload);
-                                break;
-
-                            case 3:
-                                ResponsePayload responsePayload = new ResponsePayload(payload);
-                                await ProcessResponsePayloadAsync(chargepointName, responsePayload);
-                                break;
-
-                            case 4:
-                                ErrorPayload errorPayload = new ErrorPayload(payload);
-                                await ProcessErrorPayloadAsync(chargepointName, errorPayload);
-                                continue;
-
-                            default:
-                                break;
-                        }
+                        // TODO: process payload
 
                         if (response != null)
                         {
-                            await SendPayloadToChargerAsync(chargepointName, response, webSocket);
+                            await SendPayloadToConnectedNodeAsync(connectedNodeName, response, webSocket).ConfigureAwait(false);
                         }
                     }
                 }

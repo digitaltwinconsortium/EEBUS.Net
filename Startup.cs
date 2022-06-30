@@ -51,7 +51,7 @@ namespace EEBUS
 
             var webSocketOptions = new WebSocketOptions
             {
-                KeepAliveInterval = TimeSpan.FromSeconds(1)
+                KeepAliveInterval = TimeSpan.FromSeconds(50),
             };
 
             app.UseWebSockets(webSocketOptions);
