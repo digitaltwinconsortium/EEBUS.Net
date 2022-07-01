@@ -25,7 +25,7 @@ namespace EEBUS.Controllers
             return View("Index", _mDNSClient.getEEBUSNodes());
         }
 
-        private bool ValidateServerChert(object sender, X509Certificate certificate, X509Chain chain, SslPolicyErrors sslPolicyErrors)
+        private bool ValidateServerCert(object sender, X509Certificate certificate, X509Chain chain, SslPolicyErrors sslPolicyErrors)
         {
             // TODO: always accept for now
             return true;
@@ -47,7 +47,7 @@ namespace EEBUS.Controllers
 
                 _wsClient = new ClientWebSocket();
                 _wsClient.Options.AddSubProtocol("ship");
-                _wsClient.Options.RemoteCertificateValidationCallback = ValidateServerChert;
+                _wsClient.Options.RemoteCertificateValidationCallback = ValidateServerCert;
                 X509Certificate2 cert = CertificateGenerator.GenerateCert();
                 _wsClient.Options.ClientCertificates.Add(cert);
                 await _wsClient.ConnectAsync(new Uri("wss://localhost:50000/eebus"), CancellationToken.None).ConfigureAwait(false);

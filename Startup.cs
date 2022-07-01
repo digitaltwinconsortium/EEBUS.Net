@@ -23,7 +23,7 @@ namespace EEBUS
 
         public IConfiguration Configuration { get; }
 
-        private bool ValidateClientChert(X509Certificate2 certificate, X509Chain chain, SslPolicyErrors sslPolicyErrors)
+        private bool ValidateClientCert(X509Certificate2 certificate, X509Chain chain, SslPolicyErrors sslPolicyErrors)
         {
             // TODO: always accept for now
             return true;
@@ -41,7 +41,7 @@ namespace EEBUS
                 {
                     httpOptions.ServerCertificate = CertificateGenerator.GenerateCert();
                     httpOptions.ClientCertificateMode = ClientCertificateMode.RequireCertificate;
-                    httpOptions.ClientCertificateValidation = ValidateClientChert;
+                    httpOptions.ClientCertificateValidation = ValidateClientCert;
                     httpOptions.SslProtocols = SslProtocols.Tls12;
                     httpOptions.OnAuthenticate = (connectionContext, authenticationOptions) =>
                     {
