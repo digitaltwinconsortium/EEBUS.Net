@@ -32,7 +32,7 @@ namespace EEBUS
             {
                 if (httpContext.WebSockets.IsWebSocketRequest)
                 {
-                    await HandleWebsockets(httpContext).ConfigureAwait(false);
+                    await HandleWebsocket(httpContext).ConfigureAwait(false);
                     return;
                 }
 
@@ -42,33 +42,29 @@ namespace EEBUS
             catch (Exception ex)
             {
                 Console.WriteLine("Exception: " + ex.Message);
-                Console.WriteLine(ex.StackTrace);
 
                 httpContext.Response.StatusCode = StatusCodes.Status500InternalServerError;
                 await httpContext.Response.WriteAsync("Error while processing websocket: " + ex.Message).ConfigureAwait(false);
             }
         }
 
-        private async Task HandleWebsockets(HttpContext httpContext)
+        private async Task HandleWebsocket(HttpContext httpContext)
         {
             try
             {
-                string requestPath = httpContext.Request.Path.Value;
-                string connectedNodeName = requestPath.Split('/').LastOrDefault();
-
-                if (!await IsProtocolSupported(httpContext, connectedNodeName).ConfigureAwait(false))
+                if (!await IsProtocolSupported(httpContext).ConfigureAwait(false))
                 {
                     return;
                 }
 
                 var socket = await httpContext.WebSockets.AcceptWebSocketAsync("ship").ConfigureAwait(false);
-
                 if (socket == null || socket.State != WebSocketState.Open)
                 {
                     await _next(httpContext).ConfigureAwait(false);
                     return;
                 }
 
+                string connectedNodeName = httpContext.Request.Host.Host;
                 if (!connectedNodes.ContainsKey(connectedNodeName))
                 {
                     connectedNodes.TryAdd(connectedNodeName, new EEBUSNode(connectedNodeName, socket));
@@ -95,7 +91,6 @@ namespace EEBUS
                     catch (Exception ex)
                     {
                         Console.WriteLine("Exception: " + ex.Message);
-                        Console.WriteLine(ex.StackTrace);
                     }
                 }
 
@@ -107,7 +102,6 @@ namespace EEBUS
             catch (Exception ex)
             {
                 Console.WriteLine("Exception: " + ex.Message);
-                Console.WriteLine(ex.StackTrace);
             }
         }
 
@@ -129,11 +123,10 @@ namespace EEBUS
             catch (Exception ex)
             {
                 Console.WriteLine("Exception: " + ex.Message);
-                Console.WriteLine(ex.StackTrace);
             }
         }
 
-        private async Task<bool> IsProtocolSupported(HttpContext httpContext, string connectedNodeName)
+        private async Task<bool> IsProtocolSupported(HttpContext httpContext)
         {
             string errorMessage = string.Empty;
 
@@ -200,7 +193,7 @@ namespace EEBUS
             {
                 if (webSocket != connectedNodes[connectedNodeName].WebSocket)
                 {
-                    Console.WriteLine($"Websocket exception occured in the old socket while receiving payload from connected node {connectedNodeName}. Error : {websocex.Message}");
+                    Console.WriteLine($"Websocket exception occured in an old socket while receiving payload from connected node {connectedNodeName}. Error : {websocex.Message}");
                 }
                 else
                 {
@@ -210,57 +203,6 @@ namespace EEBUS
             catch (Exception ex)
             {
                 Console.WriteLine("Exception: " + ex.Message);
-                Console.WriteLine(ex.StackTrace);
-            }
-
-            return null;
-        }
-
-        private async Task SendPayloadToConnectedNodeAsync(string connectedNodeName, object payload, WebSocket webSocket)
-        {
-            var connectedNode = connectedNodes[connectedNodeName];
-
-            try
-            {
-                connectedNode.WebsocketBusy = true;
-
-                var settings = new JsonSerializerSettings { DateFormatString = "yyyy-MM-ddTHH:mm:ss.fffZ", NullValueHandling = NullValueHandling.Ignore };
-                var serializedPayload = JsonConvert.SerializeObject(payload, settings);
-
-                ArraySegment<byte> data = Encoding.UTF8.GetBytes(serializedPayload);
-
-                if (webSocket.State == WebSocketState.Open)
-                {
-                    await webSocket.SendAsync(data, WebSocketMessageType.Text, true, CancellationToken.None).ConfigureAwait(false);
-                }
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine("Exception: " + ex.Message);
-                Console.WriteLine(ex.StackTrace);
-            }
-
-            connectedNode.WebsocketBusy = false;
-        }
-
-        private JArray ProcessPayload(string payloadString, string connectedNodeName)
-        {
-            try
-            {
-                if (payloadString != null)
-                {
-                    var basePayload = JsonConvert.DeserializeObject<JArray>(payloadString);
-                    return basePayload;
-                }
-                else
-                {
-                    Console.WriteLine($"Null payload received for {connectedNodeName}");
-                }
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine("Exception: " + ex.Message);
-                Console.WriteLine(ex.StackTrace);
             }
 
             return null;
@@ -286,7 +228,6 @@ namespace EEBUS
             catch (Exception ex)
             {
                 Console.WriteLine("Exception: " + ex.Message);
-                Console.WriteLine(ex.StackTrace);
             }
         }
 
@@ -296,27 +237,43 @@ namespace EEBUS
             {
                 try
                 {
-                    string payloadString = await ReceiveDataFromConnectedNodeAsync(webSocket, connectedNodeName).ConfigureAwait(false);
-                    var payload = ProcessPayload(payloadString, connectedNodeName);
-
-                    if (payload != null)
+                    string payload = await ReceiveDataFromConnectedNodeAsync(webSocket, connectedNodeName).ConfigureAwait(false);
+                    if (!string.IsNullOrEmpty(payload))
                     {
-                        JArray response = null;
-
                         // TODO: process payload
+                        string response = payload; // simple echo for now
 
-                        if (response != null)
-                        {
-                            await SendPayloadToConnectedNodeAsync(connectedNodeName, response, webSocket).ConfigureAwait(false);
-                        }
+                        await SendPayloadToConnectedNodeAsync(connectedNodeName, response, webSocket).ConfigureAwait(false);
                     }
                 }
                 catch (Exception ex)
                 {
                     Console.WriteLine("Exception: " + ex.Message);
-                    Console.WriteLine(ex.StackTrace);
                 }
             }
+        }
+
+        private async Task SendPayloadToConnectedNodeAsync(string connectedNodeName, string payload, WebSocket webSocket)
+        {
+            var connectedNode = connectedNodes[connectedNodeName];
+
+            try
+            {
+                connectedNode.WebsocketBusy = true;
+
+                byte[] data = Encoding.UTF8.GetBytes(payload);
+
+                if (webSocket.State == WebSocketState.Open)
+                {
+                    await webSocket.SendAsync(data, WebSocketMessageType.Text, true, CancellationToken.None).ConfigureAwait(false);
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine("Exception: " + ex.Message);
+            }
+
+            connectedNode.WebsocketBusy = false;
         }
     }
 }

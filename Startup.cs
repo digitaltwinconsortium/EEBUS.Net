@@ -34,7 +34,7 @@ namespace EEBUS
             {
                 kestrelOptions.ConfigureHttpsDefaults(httpOptions =>
                 {
-                    // TODO: Load EEBUS-compatible server cert: httpOptions.ServerCertificate = new X509Certificate2("path", "password");
+                    httpOptions.ServerCertificate = CertificateGenerator.GenerateCert();
                     httpOptions.ClientCertificateMode = ClientCertificateMode.RequireCertificate;
                     httpOptions.SslProtocols = SslProtocols.Tls12;
                     httpOptions.OnAuthenticate = (connectionContext, authenticationOptions) =>
@@ -127,7 +127,7 @@ namespace EEBUS
 
             var webSocketOptions = new WebSocketOptions
             {
-                KeepAliveInterval = TimeSpan.FromSeconds(50),
+                KeepAliveInterval = TimeSpan.FromSeconds(50)
             };
 
             app.UseWebSockets(webSocketOptions);
