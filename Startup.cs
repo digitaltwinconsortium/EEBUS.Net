@@ -8,11 +8,9 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using System;
-using System.Collections.Generic;
 using System.Net.Security;
 using System.Security.Authentication;
-using System.Security.Claims;
-using System.Threading.Tasks;
+using System.Security.Cryptography.X509Certificates;
 
 namespace EEBUS
 {
@@ -25,6 +23,13 @@ namespace EEBUS
 
         public IConfiguration Configuration { get; }
 
+        private bool ValidateClientChert(X509Certificate2 certificate, X509Chain chain, SslPolicyErrors sslPolicyErrors)
+        {
+            // TODO: always accept for now
+            return true;
+        }
+
+
         // This method gets called by the runtime. Use this method to add services to the container.
         public void ConfigureServices(IServiceCollection services)
         {
@@ -36,64 +41,18 @@ namespace EEBUS
                 {
                     httpOptions.ServerCertificate = CertificateGenerator.GenerateCert();
                     httpOptions.ClientCertificateMode = ClientCertificateMode.RequireCertificate;
+                    httpOptions.ClientCertificateValidation = ValidateClientChert;
                     httpOptions.SslProtocols = SslProtocols.Tls12;
                     httpOptions.OnAuthenticate = (connectionContext, authenticationOptions) =>
                     {
                         authenticationOptions.EnabledSslProtocols = SslProtocols.Tls12;
-
-                        if (Environment.OSVersion.Platform == PlatformID.Unix)
-                        {
-                            var ciphers = new List<TlsCipherSuite>()
-                            {
-                                TlsCipherSuite.TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA256,
-                                TlsCipherSuite.TLS_ECDHE_ECDSA_WITH_AES_128_CCM_8,
-                                TlsCipherSuite.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256
-                            };
-
-                            authenticationOptions.CipherSuitesPolicy = new CipherSuitesPolicy(ciphers);
-                        }
                     };
                 });
             });
 
-            services.AddSingleton<CertificateValidation>();
-
             services.AddAuthentication(CertificateAuthenticationDefaults.AuthenticationScheme).AddCertificate(options =>
             {
                 options.AllowedCertificateTypes = CertificateTypes.All;
-                options.Events = new CertificateAuthenticationEvents
-                {
-                    OnCertificateValidated = context =>
-                    {
-                        CertificateValidation validationService = context.HttpContext.RequestServices.GetService<CertificateValidation>();
-
-                        if (validationService.ValidateCertificate(context.ClientCertificate))
-                        {
-                            var claims = new[]
-                            {
-                                new Claim(
-                                    ClaimTypes.NameIdentifier,
-                                    context.ClientCertificate.Subject,
-                                    ClaimValueTypes.String, context.Options.ClaimsIssuer),
-
-                                new Claim(
-                                    ClaimTypes.Name,
-                                    context.ClientCertificate.Subject,
-                                    ClaimValueTypes.String, context.Options.ClaimsIssuer)
-                            };
-
-                            context.Principal = new ClaimsPrincipal(new ClaimsIdentity(claims, context.Scheme.Name));
-
-                            context.Success();
-                        }
-                        else
-                        {
-                            context.Fail("Invalid EEBUS certificate!");
-                        }
-
-                        return Task.CompletedTask;
-                    }
-                };
             });
 
             services.AddAuthorization();
