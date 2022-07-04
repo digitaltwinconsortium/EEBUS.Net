@@ -27,7 +27,7 @@
         <div>
             <p/>
             <form method="post" enctype="multipart/form-data" asp-controller="Browser" asp-action="Accept">
-                <input class="btn btn-primary" type="submit" value="Accept">
+                <input name="EEBUS: @Model.Name @Model.Id @Model.Url" class="btn btn-primary" type="submit" value="Accept">
             </form>
             <p/>
             <form method="post" enctype="multipart/form-data" asp-controller="Browser" asp-action="Disconnect">

@@ -99,6 +99,18 @@ namespace EEBUS.Controllers
         {
             try
             {
+                foreach (string key in Request.Form.Keys)
+                {
+                    if (key.Contains("EEBUS:"))
+                    {
+                        string[] parts = key.Split(' ');
+                        _model.Name = parts[1];
+                        _model.Id = parts[2];
+                        _model.Url = parts[3];
+                        break;
+                    }
+                }
+
                 if (_wsClient.State == WebSocketState.Open)
                 {
                     // send init message
