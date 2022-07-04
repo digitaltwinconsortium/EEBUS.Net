@@ -24,10 +24,11 @@
             {
                 <li>
                     @node.Name<br/>
+                    @node.Id<br/>
                     @node.Url<br/>
                     <p/>
                     <form method="post" enctype="multipart/form-data" asp-controller="Browser" asp-action="Connect">
-                        <input name="EEBUS: @node.Url @node.Name" class="btn btn-primary" type="submit" value="Connect">
+                        <input name="EEBUS: @node.Name @node.Id @node.Url" class="btn btn-primary" type="submit" value="Connect">
                     </form>
                     <hr />
                 </li>

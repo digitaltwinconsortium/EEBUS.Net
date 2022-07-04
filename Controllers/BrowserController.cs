@@ -1,6 +1,7 @@
 ﻿
 namespace EEBUS.Controllers
 {
+    using EEBUS.Enums;
     using EEBUS.Models;
     using Microsoft.AspNetCore.Mvc;
     using System;
@@ -45,6 +46,14 @@ namespace EEBUS.Controllers
                 {
                     X509SubjectKeyIdentifierExtension ext = (X509SubjectKeyIdentifierExtension)extension;
                     _model.SKI = ext.SubjectKeyIdentifier;
+
+                    // add spaces every 4 hex digits (EEBUS requirement)
+                    for (int i = 4; i < _model.SKI.Length; i += 4)
+                    {
+                        _model.SKI = _model.SKI.Insert(i, " ");
+                        i++;
+                    }
+
                     break;
                 }
             }
@@ -62,8 +71,9 @@ namespace EEBUS.Controllers
                     if (key.Contains("EEBUS:"))
                     {
                         string[] parts = key.Split(' ');
-                        _model.Url = parts[1];
-                        _model.Name = parts[2];
+                        _model.Name = parts[1];
+                        _model.Id = parts[2];
+                        _model.Url = parts[3];
                         break;
                     }
                 }
@@ -91,16 +101,29 @@ namespace EEBUS.Controllers
             {
                 if (_wsClient.State == WebSocketState.Open)
                 {
-                    await _wsClient.SendAsync(Encoding.UTF8.GetBytes("Hello"), WebSocketMessageType.Binary, true, CancellationToken.None).ConfigureAwait(false);
+                    // send init message
+                    byte[] initMessage = new byte[2];
+                    initMessage[0] = (int)SHIPMessageType.INIT;
+                    initMessage[1] = 0;
+                    await _wsClient.SendAsync(initMessage, WebSocketMessageType.Binary, true, CancellationToken.None).ConfigureAwait(false);
 
-                    var buffer = new byte[256]; 
-                    WebSocketReceiveResult result = await _wsClient.ReceiveAsync(buffer, CancellationToken.None).ConfigureAwait(false);
+                    // wait for init response message from server
+                    byte[] response = new byte[256]; 
+                    WebSocketReceiveResult result = await _wsClient.ReceiveAsync(response, CancellationToken.None).ConfigureAwait(false);
                     if (result.MessageType == WebSocketMessageType.Close)
                     {
                         return await Disconnect().ConfigureAwait(false);
                     }
 
-                    _model.LastMessage = Encoding.UTF8.GetString(buffer, 0, result.Count);
+                    if (response[0] != (int)SHIPMessageType.INIT || response[1] != 0)
+                    {
+                        return await Disconnect().ConfigureAwait(false);
+                    }
+                    else
+                    {
+                        // connection data preparation ("hello" message)
+                    }
+                    
                     return View("Connected", _model);
                 }
                 else

@@ -86,24 +86,37 @@ namespace EEBUS
                                 // we only want IPv4 addresses
                                 if (serverAddress.Address.AddressFamily == AddressFamily.InterNetwork)
                                 {
+                                    string id = string.Empty;
+                                    string path = string.Empty;
                                     foreach (string textRecord in txtRecords)
                                     {
                                         if (textRecord.StartsWith("path"))
                                         {
-                                            ServerNode newNode = new ServerNode
-                                            {
-                                                Name = e.ServiceInstanceName.ToString(),
-                                                Url = serverAddress.Address.ToString() + ":" + server.Port.ToString() + textRecord.Substring(textRecord.IndexOf('=') + 1)
-                                            };
+                                            path = textRecord.Substring(textRecord.IndexOf('=') + 1);
+                                        }
 
-                                            if (_currentEEBUSNodes.ContainsKey(newNode))
-                                            {
-                                                _currentEEBUSNodes[newNode] = DateTime.UtcNow;
-                                            }
-                                            else
-                                            {
-                                                _currentEEBUSNodes.TryAdd(newNode, DateTime.UtcNow);
-                                            }
+                                        if (textRecord.StartsWith("id"))
+                                        {
+                                            id = textRecord.Substring(textRecord.IndexOf('=') + 1);
+                                        }
+                                    }
+
+                                    if (!string.IsNullOrEmpty(id) && !string.IsNullOrEmpty(path))
+                                    {
+                                        ServerNode newNode = new ServerNode
+                                        {
+                                            Name = e.ServiceInstanceName.ToString(),
+                                            Url = serverAddress.Address.ToString() + ":" + server.Port.ToString() + path,
+                                            Id = id
+                                        };
+
+                                        if (_currentEEBUSNodes.ContainsKey(newNode))
+                                        {
+                                            _currentEEBUSNodes[newNode] = DateTime.UtcNow;
+                                        }
+                                        else
+                                        {
+                                            _currentEEBUSNodes.TryAdd(newNode, DateTime.UtcNow);
                                         }
                                     }
                                 }

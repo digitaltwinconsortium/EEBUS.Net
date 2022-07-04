@@ -111,12 +111,12 @@ namespace EEBUS
             {
                 if (webSocket.State == WebSocketState.Open)
                 {
-                    await HandlePayloadsAsync(connectedNodeName, webSocket).ConfigureAwait(false);
+                    await HandlePayloadAsync(connectedNodeName, webSocket).ConfigureAwait(false);
                 }
 
                 if (webSocket.State != WebSocketState.Open && connectedNodes.ContainsKey(connectedNodeName) && connectedNodes[connectedNodeName].WebSocket == webSocket)
                 {
-                    await RemoveConnectionsAsync(connectedNodeName, webSocket).ConfigureAwait(false);
+                    await CloseConnectionAsync(connectedNodeName, webSocket).ConfigureAwait(false);
                 }
 
             }
@@ -154,7 +154,7 @@ namespace EEBUS
             return false;
         }
 
-        private async Task<string> ReceiveDataFromConnectedNodeAsync(WebSocket webSocket, string connectedNodeName)
+        private async Task<string> ReceiveDataAsync(WebSocket webSocket, string connectedNodeName)
         {
             try
             {
@@ -177,7 +177,7 @@ namespace EEBUS
                         }
                         else
                         {
-                            await RemoveConnectionsAsync(connectedNodeName, webSocket).ConfigureAwait(false);
+                            await CloseConnectionAsync(connectedNodeName, webSocket).ConfigureAwait(false);
                         }
 
                         return null;
@@ -208,7 +208,7 @@ namespace EEBUS
             return null;
         }
 
-        private async Task RemoveConnectionsAsync(string connectedNodeName, WebSocket webSocket)
+        private async Task CloseConnectionAsync(string connectedNodeName, WebSocket webSocket)
         {
             try
             {
@@ -231,19 +231,19 @@ namespace EEBUS
             }
         }
 
-        private async Task HandlePayloadsAsync(string connectedNodeName, WebSocket webSocket)
+        private async Task HandlePayloadAsync(string connectedNodeName, WebSocket webSocket)
         {
             while (webSocket.State == WebSocketState.Open)
             {
                 try
                 {
-                    string payload = await ReceiveDataFromConnectedNodeAsync(webSocket, connectedNodeName).ConfigureAwait(false);
+                    string payload = await ReceiveDataAsync(webSocket, connectedNodeName).ConfigureAwait(false);
                     if (!string.IsNullOrEmpty(payload))
                     {
                         // TODO: process payload
                         string response = payload; // simple echo for now
 
-                        await SendPayloadToConnectedNodeAsync(connectedNodeName, response, webSocket).ConfigureAwait(false);
+                        await SendResponseAsync(connectedNodeName, response, webSocket).ConfigureAwait(false);
                     }
                 }
                 catch (Exception ex)
@@ -253,7 +253,7 @@ namespace EEBUS
             }
         }
 
-        private async Task SendPayloadToConnectedNodeAsync(string connectedNodeName, string payload, WebSocket webSocket)
+        private async Task SendResponseAsync(string connectedNodeName, string payload, WebSocket webSocket)
         {
             var connectedNode = connectedNodes[connectedNodeName];
 

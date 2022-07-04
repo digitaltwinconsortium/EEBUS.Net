@@ -27,7 +27,7 @@ namespace EEBUS
 
         private bool ValidateClientCert(X509Certificate2 certificate, X509Chain chain, SslPolicyErrors sslPolicyErrors)
         {
-            // TODO: always accept for now
+            // auto accept mode is active, register flag is set in discovery service
             return true;
         }
 
@@ -96,7 +96,7 @@ namespace EEBUS
             app.UseMiddleware<WebsocketJsonMiddleware>();
 
             // configure our EEBUS mDNS properties
-            mDNSService.AddProperty("id", Guid.NewGuid().ToString());
+            mDNSService.AddProperty("id", "ID:MICROSOFT-Azure-EEBUS-Gateway-100;");
             mDNSService.AddProperty("path", "/ship/");
             mDNSService.AddProperty("register", "true");
 

@@ -11,6 +11,8 @@ namespace EEBUS.Models
 
         public string SKI { get; set; }
 
+        public string Id { get; set; }
+
         public string LastMessage { get; set; }
 
         public string Error { get; set; }
