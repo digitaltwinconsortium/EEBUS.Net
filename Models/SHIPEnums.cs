@@ -8,6 +8,11 @@
         END
     }
 
+    enum SHIPMessageTimeout
+    {
+        INIT_RECEIVED = 5000
+    }
+
     enum SHIPConnectionModeInitialisation
     {
         CONNECTION_DATA_PREPARATION = 0

@@ -121,7 +121,7 @@ namespace EEBUS.Controllers
 
                     // wait for init response message from server
                     byte[] response = new byte[256]; 
-                    WebSocketReceiveResult result = await _wsClient.ReceiveAsync(response, CancellationToken.None).ConfigureAwait(false);
+                    WebSocketReceiveResult result = await _wsClient.ReceiveAsync(response, new CancellationTokenSource((int)SHIPMessageTimeout.INIT_RECEIVED).Token).ConfigureAwait(false);
                     if (result.MessageType == WebSocketMessageType.Close)
                     {
                         return await Disconnect().ConfigureAwait(false);
