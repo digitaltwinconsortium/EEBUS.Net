@@ -1,0 +1,34 @@
+﻿@using EEBUS.Models
+
+@model ServerNode
+
+@{
+    ViewData["Title"] = "Browse EEBUS Servers";
+}
+
+<h1>@ViewData["Title"]</h1>
+
+ <p>
+    <h3>Connected to @Model.Name</h3>
+ </p>
+
+<div class="container-fluid browser_connect_container">
+    @if (Model.Error != null)
+    {
+        <div>
+            @Model.Error
+        </div>
+    }
+    else
+    {
+        <div>
+            Last Message recevied: @Model.LastMessage
+        </div>
+        <div>
+            <p/>
+            <form method="post" enctype="multipart/form-data" asp-controller="Browser" asp-action="Disconnect">
+                <input class="btn btn-primary" type="submit" value="Disconnect">
+            </form>
+        </div>
+    }
+</div>

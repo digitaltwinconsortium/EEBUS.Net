@@ -5,7 +5,7 @@ using System.Collections.Generic;
 
 namespace EEBUS.Models
 {
-    public class EEBUSNode
+    public class WSClientConnection
     {
         public string Name { get; set; }
 
@@ -21,7 +21,7 @@ namespace EEBUS.Models
 
         public bool WaitingResponse => Request.Count != 0;
 
-        public EEBUSNode(string name,WebSocket webSocket)
+        public WSClientConnection(string name,WebSocket webSocket)
         {
             Name = name;
             WebSocket = webSocket;

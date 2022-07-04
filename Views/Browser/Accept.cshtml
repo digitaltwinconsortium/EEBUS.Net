@@ -1,0 +1,38 @@
+﻿@using EEBUS.Models
+
+@model ServerNode
+
+@{
+    ViewData["Title"] = "Browse EEBUS Servers";
+}
+
+<h1>@ViewData["Title"]</h1>
+
+ <p>
+    <h3>Connect to @Model.Name?</h3>
+ </p>
+
+<div class="container-fluid browser_connect_container">
+    @if (Model.Error != null)
+    {
+        <div>
+            @Model.Error
+        </div>
+    }
+    else
+    {
+        <div>
+            Subject Key Identifier: @Model.SKI
+        </div>
+        <div>
+            <p/>
+            <form method="post" enctype="multipart/form-data" asp-controller="Browser" asp-action="Accept">
+                <input class="btn btn-primary" type="submit" value="Accept">
+            </form>
+            <p/>
+            <form method="post" enctype="multipart/form-data" asp-controller="Browser" asp-action="Disconnect">
+                <input class="btn btn-primary" type="submit" value="Cancel">
+            </form>
+        </div>
+    }
+</div>

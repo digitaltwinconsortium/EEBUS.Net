@@ -4,10 +4,12 @@ using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Server.Kestrel.Core;
 using Microsoft.AspNetCore.Server.Kestrel.Https;
+using Microsoft.AspNetCore.WebSockets;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using System;
+using System.Net;
 using System.Net.Security;
 using System.Security.Authentication;
 using System.Security.Cryptography.X509Certificates;
@@ -39,7 +41,7 @@ namespace EEBUS
             {
                 kestrelOptions.ConfigureHttpsDefaults(httpOptions =>
                 {
-                    httpOptions.ServerCertificate = CertificateGenerator.GenerateCert();
+                    httpOptions.ServerCertificate = CertificateGenerator.GenerateCert(Dns.GetHostName());
                     httpOptions.ClientCertificateMode = ClientCertificateMode.RequireCertificate;
                     httpOptions.ClientCertificateValidation = ValidateClientCert;
                     httpOptions.SslProtocols = SslProtocols.Tls12;
@@ -96,7 +98,6 @@ namespace EEBUS
             // configure our EEBUS mDNS properties
             mDNSService.AddProperty("id", Guid.NewGuid().ToString());
             mDNSService.AddProperty("path", "/ship/");
-            mDNSService.AddProperty("ski", Guid.NewGuid().ToString());
             mDNSService.AddProperty("register", "true");
 
             // start our mDNS services

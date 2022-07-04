@@ -18,7 +18,7 @@ namespace EEBUS
     public class WebsocketJsonMiddleware
     {
         private readonly RequestDelegate _next;
-        private ConcurrentDictionary<string, EEBUSNode> connectedNodes = new ConcurrentDictionary<string, EEBUSNode>();
+        private ConcurrentDictionary<string, WSClientConnection> connectedNodes = new ConcurrentDictionary<string, WSClientConnection>();
 
 
         public WebsocketJsonMiddleware(RequestDelegate next)
@@ -67,7 +67,7 @@ namespace EEBUS
                 string connectedNodeName = httpContext.Request.Host.Host;
                 if (!connectedNodes.ContainsKey(connectedNodeName))
                 {
-                    connectedNodes.TryAdd(connectedNodeName, new EEBUSNode(connectedNodeName, socket));
+                    connectedNodes.TryAdd(connectedNodeName, new WSClientConnection(connectedNodeName, socket));
                     Console.WriteLine($"No. of active connectedNodes : {connectedNodes.Count}");
                 }
                 else
@@ -212,7 +212,7 @@ namespace EEBUS
         {
             try
             {
-                if (connectedNodes.TryRemove(connectedNodeName, out EEBUSNode connectedNode))
+                if (connectedNodes.TryRemove(connectedNodeName, out WSClientConnection connectedNode))
                 {
                     Console.WriteLine($"Removed connected node {connectedNodeName}");
                 }

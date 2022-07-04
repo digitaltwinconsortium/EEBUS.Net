@@ -4,7 +4,7 @@
     "windowsAuthentication": false,
     "anonymousAuthentication": true,
     "iisExpress": {
-      "applicationUrl": "https://localhost:50000",
+      "applicationUrl": "https://erichb2:50000",
       "sslPort": 50000
     }
   },
@@ -19,7 +19,7 @@
     "EEBUS.Net": {
       "commandName": "Project",
       "launchBrowser": true,
-      "applicationUrl": "https://localhost:50000",
+      "applicationUrl": "https://erichb2:50000",
       "environmentVariables": {
         "ASPNETCORE_ENVIRONMENT": "Development"
       }
@@ -37,7 +37,7 @@
     "WSL": {
       "commandName": "WSL2",
       "launchBrowser": true,
-      "applicationUrl": "https://localhost:50000",
+      "applicationUrl": "https://erichb2:50000",
       "environmentVariables": {
         "ASPNETCORE_ENVIRONMENT": "Development"
       },
