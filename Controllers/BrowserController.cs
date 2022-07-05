@@ -336,6 +336,11 @@ namespace EEBUS.Controllers
 
                 if ((handshakeMessageReceived.messageProtocolHandshake.formats.Length > 0) && (handshakeMessageReceived.messageProtocolHandshake.formats[0] == SHIPMessageFormat.JSON_UTF8))
                 {
+                    // send the message back
+                    byte[] handshakeReturn = new byte[result.Count];
+                    Buffer.BlockCopy(handshakeResponse, 0, handshakeReturn, 0, result.Count);
+                    await _wsClient.SendAsync(handshakeReturn, WebSocketMessageType.Binary, true, new CancellationTokenSource(SHIPMessageTimeout.CMI_TIMEOUT).Token).ConfigureAwait(false);
+
                     return true;
                 }
                 else
