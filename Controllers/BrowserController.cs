@@ -4,6 +4,7 @@ namespace EEBUS.Controllers
     using EEBUS.Enums;
     using EEBUS.Models;
     using Microsoft.AspNetCore.Mvc;
+    using Newtonsoft.Json;
     using System;
     using System.Net;
     using System.Net.Security;
@@ -97,6 +98,7 @@ namespace EEBUS.Controllers
         [HttpPost]
         public async Task<IActionResult> Accept()
         {
+            bool helloPhase = false;
             try
             {
                 foreach (string key in Request.Form.Keys)
@@ -113,28 +115,85 @@ namespace EEBUS.Controllers
 
                 if (_wsClient.State == WebSocketState.Open)
                 {
-                    // send init message
-                    byte[] initMessage = new byte[2];
-                    initMessage[0] = (byte)SHIPMessageType.INIT;
-                    initMessage[1] = (byte)SHIPMessageValue.CMI_HEAD;
-                    await _wsClient.SendAsync(initMessage, WebSocketMessageType.Binary, true, CancellationToken.None).ConfigureAwait(false);
+                    // send init request message
+                    byte[] initRequest = new byte[2];
+                    initRequest[0] = SHIPMessageType.INIT;
+                    initRequest[1] = SHIPMessageValue.CMI_HEAD;
+                    await _wsClient.SendAsync(initRequest, WebSocketMessageType.Binary, true, new CancellationTokenSource(SHIPMessageTimeout.CMI_TIMEOUT).Token).ConfigureAwait(false);
 
                     // wait for init response message from server
-                    byte[] response = new byte[256]; 
-                    WebSocketReceiveResult result = await _wsClient.ReceiveAsync(response, new CancellationTokenSource((int)SHIPMessageTimeout.CMI_TIMEOUT).Token).ConfigureAwait(false);
+                    byte[] initResponse = new byte[2]; 
+                    WebSocketReceiveResult result = await _wsClient.ReceiveAsync(initResponse, new CancellationTokenSource(SHIPMessageTimeout.CMI_TIMEOUT).Token).ConfigureAwait(false);
                     if (result.MessageType == WebSocketMessageType.Close)
                     {
                         return await Disconnect().ConfigureAwait(false);
                     }
 
-                    if (response[0] != (int)SHIPMessageType.INIT || response[1] != 0)
+                    if ((initResponse[0] != SHIPMessageType.INIT) || (initResponse[1] != SHIPMessageValue.CMI_HEAD))
                     {
-                        return await Disconnect().ConfigureAwait(false);
+                        throw new Exception("Expected init response message!");
                     }
-                    
-                    // connection data preparation ("hello" message)
-                    
-                    
+
+                    // send connection data preparation ("hello" message)
+                    helloPhase = true;
+                    ConnectionHelloType helloMessage = new ConnectionHelloType();
+                    helloMessage.phase = ConnectionHelloPhaseType.ready;
+                    byte[] helloMessageSerialized = Encoding.UTF8.GetBytes(JsonConvert.SerializeObject(helloMessage));
+
+                    byte[] helloMessageBuffer = new byte[helloMessageSerialized.Length + 1];
+                    helloMessageBuffer[0] = SHIPMessageType.CONTROL; 
+                    Buffer.BlockCopy(helloMessageSerialized, 0, helloMessageBuffer, 1, helloMessageSerialized.Length);
+                    await _wsClient.SendAsync(helloMessageBuffer, WebSocketMessageType.Binary, true, new CancellationTokenSource(SHIPMessageTimeout.CMI_TIMEOUT).Token).ConfigureAwait(false);
+
+                    // wait for hello response message from server
+                    int numProlongsReceived = 0;
+                    while (helloPhase)
+                    {
+                        byte[] helloResponse = new byte[256];
+                        result = await _wsClient.ReceiveAsync(helloResponse, new CancellationTokenSource(SHIPMessageTimeout.T_HELLO_INIT).Token).ConfigureAwait(false);
+                        if (result.MessageType == WebSocketMessageType.Close)
+                        {
+                            return await Disconnect().ConfigureAwait(false);
+                        }
+
+                        if ((result.Count < 2) || (helloResponse[0] != SHIPMessageType.CONTROL))
+                        {
+                            throw new Exception("Expected hello message!");
+                        }
+
+                        byte[] helloResponseMessageBuffer = new byte[result.Count - 1];
+                        Buffer.BlockCopy(helloResponse, 1, helloResponseMessageBuffer, 0, result.Count - 1);
+                        ConnectionHelloType helloMessageReceived = JsonConvert.DeserializeObject<ConnectionHelloType>(Encoding.UTF8.GetString(helloResponseMessageBuffer));
+                        switch (helloMessageReceived.phase)
+                        {
+                            case ConnectionHelloPhaseType.ready:
+                                // all good, we can move on
+                                helloPhase = false;
+                                break;
+
+                            case ConnectionHelloPhaseType.aborted:
+                                return await Disconnect("Hello phase aborted by server!").ConfigureAwait(false);
+
+                            case ConnectionHelloPhaseType.pending:
+
+                                if (helloMessageReceived.prolongationRequestSpecified)
+                                {
+                                    // the server needs more time, send a hello update message
+                                    numProlongsReceived++;
+                                    if (numProlongsReceived > 2)
+                                    {
+                                        throw new Exception("More than 2 prolong requests received, aborting!");
+                                    }
+
+                                    await _wsClient.SendAsync(helloMessageBuffer, WebSocketMessageType.Binary, true, new CancellationTokenSource(SHIPMessageTimeout.T_HELLO_PROLONG_WAITING_GAP).Token).ConfigureAwait(false);
+                                }
+                              
+                                break;
+
+                            default: throw new Exception("Invalid hello sub-state received!");
+                        }
+                    }
+
                     return View("Connected", _model);
                 }
                 else
@@ -144,13 +203,32 @@ namespace EEBUS.Controllers
             }
             catch (Exception ex)
             {
-                _model.Error = "Error: " + ex.Message;
-                return View("Index", new ServerNode[] { _model });
+                if (helloPhase)
+                {
+                    try
+                    {
+                        // send hello abort message
+                        ConnectionHelloType helloMessage = new ConnectionHelloType();
+                        helloMessage.phase = ConnectionHelloPhaseType.aborted;
+                        byte[] helloMessageSerialized = Encoding.UTF8.GetBytes(JsonConvert.SerializeObject(helloMessage));
+
+                        byte[] helloMessageBuffer = new byte[helloMessageSerialized.Length + 1];
+                        helloMessageBuffer[0] = SHIPMessageType.CONTROL;
+                        Buffer.BlockCopy(helloMessageSerialized, 0, helloMessageBuffer, 1, helloMessageSerialized.Length);
+                        await _wsClient.SendAsync(helloMessageBuffer, WebSocketMessageType.Binary, true, new CancellationTokenSource(SHIPMessageTimeout.CMI_TIMEOUT).Token).ConfigureAwait(false);
+                    }
+                    catch (Exception)
+                    {
+                        // do nothing
+                    }
+                }
+
+                return await Disconnect(ex.Message).ConfigureAwait(false);
             }
         }
 
         [HttpPost]
-        public async Task<IActionResult> Disconnect()
+        public async Task<IActionResult> Disconnect(string errorMessage = null)
         {
             try
             {
@@ -160,8 +238,16 @@ namespace EEBUS.Controllers
                     _wsClient.Dispose();
                     _wsClient = null;
                 }
-                
-                return View("Index", _mDNSClient.getEEBUSNodes());
+
+                if (string.IsNullOrEmpty(errorMessage))
+                {
+                    return View("Index", _mDNSClient.getEEBUSNodes());
+                }
+                else
+                {
+                    _model.Error = "Error: " + errorMessage;
+                    return View("Index", new ServerNode[] { _model });
+                }
             }
             catch (Exception)
             {
