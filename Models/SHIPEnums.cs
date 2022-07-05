@@ -10,7 +10,12 @@
 
     enum SHIPMessageTimeout
     {
-        INIT_RECEIVED = 5000
+        CMI_TIMEOUT = 30000 // maximum allowed according to spec
+    }
+
+    enum SHIPMessageValue
+    {
+        CMI_HEAD = 0
     }
 
     enum SHIPConnectionModeInitialisation

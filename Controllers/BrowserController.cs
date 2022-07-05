@@ -115,13 +115,13 @@ namespace EEBUS.Controllers
                 {
                     // send init message
                     byte[] initMessage = new byte[2];
-                    initMessage[0] = (int)SHIPMessageType.INIT;
-                    initMessage[1] = 0;
+                    initMessage[0] = (byte)SHIPMessageType.INIT;
+                    initMessage[1] = (byte)SHIPMessageValue.CMI_HEAD;
                     await _wsClient.SendAsync(initMessage, WebSocketMessageType.Binary, true, CancellationToken.None).ConfigureAwait(false);
 
                     // wait for init response message from server
                     byte[] response = new byte[256]; 
-                    WebSocketReceiveResult result = await _wsClient.ReceiveAsync(response, new CancellationTokenSource((int)SHIPMessageTimeout.INIT_RECEIVED).Token).ConfigureAwait(false);
+                    WebSocketReceiveResult result = await _wsClient.ReceiveAsync(response, new CancellationTokenSource((int)SHIPMessageTimeout.CMI_TIMEOUT).Token).ConfigureAwait(false);
                     if (result.MessageType == WebSocketMessageType.Close)
                     {
                         return await Disconnect().ConfigureAwait(false);
@@ -131,10 +131,9 @@ namespace EEBUS.Controllers
                     {
                         return await Disconnect().ConfigureAwait(false);
                     }
-                    else
-                    {
-                        // connection data preparation ("hello" message)
-                    }
+                    
+                    // connection data preparation ("hello" message)
+                    
                     
                     return View("Connected", _model);
                 }

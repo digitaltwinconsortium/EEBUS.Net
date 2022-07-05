@@ -1,15 +1,10 @@
 ﻿
-using EEBUS.Models;
 using Microsoft.AspNetCore.Http;
-using Newtonsoft.Json;
-using Newtonsoft.Json.Linq;
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
-using System.Linq;
 using System.Net.WebSockets;
-using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -18,7 +13,7 @@ namespace EEBUS
     public class WebsocketJsonMiddleware
     {
         private readonly RequestDelegate _next;
-        private ConcurrentDictionary<string, WSClientConnection> connectedNodes = new ConcurrentDictionary<string, WSClientConnection>();
+        private ConcurrentDictionary<string, WebSocket> connectedNodes = new ConcurrentDictionary<string, WebSocket>();
 
 
         public WebsocketJsonMiddleware(RequestDelegate next)
@@ -30,14 +25,44 @@ namespace EEBUS
         {
             try
             {
-                if (httpContext.WebSockets.IsWebSocketRequest)
+                if (!httpContext.WebSockets.IsWebSocketRequest)
                 {
-                    await HandleWebsocket(httpContext).ConfigureAwait(false);
+                    // passed on to next middleware
+                    await _next(httpContext).ConfigureAwait(false);
+                }
+
+                if (!ProtocolSupported(httpContext))
+                {
+                    // passed on to next middleware
+                    await _next(httpContext).ConfigureAwait(false);
+                }
+
+                string connectedNodeName = httpContext.Request.Host.Host;
+                if (connectedNodes.ContainsKey(connectedNodeName))
+                {
+                    // we only allow 1 connection per host, so close any existing
+                    WebSocket existingSocket = connectedNodes[connectedNodeName];
+                    if (existingSocket != null)
+                    {
+                        Console.WriteLine($"New websocket request received for existing connection {connectedNodeName}, closing old websocket!");
+                        await CloseConnectionAsync(connectedNodeName, existingSocket).ConfigureAwait(false);
+                    }
+                }
+
+                var socket = await httpContext.WebSockets.AcceptWebSocketAsync("ship").ConfigureAwait(false);
+                if (socket == null || socket.State != WebSocketState.Open)
+                {
+                    Console.WriteLine("Failed to accept socket from " + httpContext.Request.Host.Host);
                     return;
                 }
 
-                // passed on to next middleware
-                await _next(httpContext).ConfigureAwait(false);
+                connectedNodes.TryAdd(connectedNodeName, socket);
+                Console.WriteLine($"Now connected to {connectedNodeName}. Number of active connections: {connectedNodes.Count}");
+
+                await SendAndReceive(socket).ConfigureAwait(false);
+                                
+                // we're done, close and return
+                await CloseConnectionAsync(connectedNodeName, socket).ConfigureAwait(false);
             }
             catch (Exception ex)
             {
@@ -48,232 +73,57 @@ namespace EEBUS
             }
         }
 
-        private async Task HandleWebsocket(HttpContext httpContext)
+        private bool ProtocolSupported(HttpContext httpContext)
         {
-            try
-            {
-                if (!await IsProtocolSupported(httpContext).ConfigureAwait(false))
-                {
-                    return;
-                }
-
-                var socket = await httpContext.WebSockets.AcceptWebSocketAsync("ship").ConfigureAwait(false);
-                if (socket == null || socket.State != WebSocketState.Open)
-                {
-                    await _next(httpContext).ConfigureAwait(false);
-                    return;
-                }
-
-                string connectedNodeName = httpContext.Request.Host.Host;
-                if (!connectedNodes.ContainsKey(connectedNodeName))
-                {
-                    connectedNodes.TryAdd(connectedNodeName, new WSClientConnection(connectedNodeName, socket));
-                    Console.WriteLine($"No. of active connectedNodes : {connectedNodes.Count}");
-                }
-                else
-                {
-                    try
-                    {
-                        var oldSocket = connectedNodes[connectedNodeName].WebSocket;
-                        connectedNodes[connectedNodeName].WebSocket = socket;
-                        if (oldSocket != null)
-                        {
-                            Console.WriteLine($"New websocket request received for {connectedNodeName}");
-                            if (oldSocket != socket && oldSocket.State != WebSocketState.Closed)
-                            {
-                                Console.WriteLine($"Closing old websocket for {connectedNodeName}");
-
-                                await oldSocket.CloseOutputAsync(WebSocketCloseStatus.NormalClosure, "Client initiated new websocket!", CancellationToken.None).ConfigureAwait(false);
-                            }
-                        }
-                        Console.WriteLine($"Websocket replaced successfully for {connectedNodeName}");
-                    }
-                    catch (Exception ex)
-                    {
-                        Console.WriteLine("Exception: " + ex.Message);
-                    }
-                }
-
-                if (socket.State == WebSocketState.Open)
-                {
-                    await HandleActiveConnection(socket, connectedNodeName).ConfigureAwait(false);
-                }
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine("Exception: " + ex.Message);
-            }
-        }
-
-        private async Task HandleActiveConnection(WebSocket webSocket, string connectedNodeName)
-        {
-            try
-            {
-                if (webSocket.State == WebSocketState.Open)
-                {
-                    await HandlePayloadAsync(connectedNodeName, webSocket).ConfigureAwait(false);
-                }
-
-                if (webSocket.State != WebSocketState.Open && connectedNodes.ContainsKey(connectedNodeName) && connectedNodes[connectedNodeName].WebSocket == webSocket)
-                {
-                    await CloseConnectionAsync(connectedNodeName, webSocket).ConfigureAwait(false);
-                }
-
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine("Exception: " + ex.Message);
-            }
-        }
-
-        private async Task<bool> IsProtocolSupported(HttpContext httpContext)
-        {
-            string errorMessage = string.Empty;
-
             IList<string> requestedProtocols = httpContext.WebSockets.WebSocketRequestedProtocols;
-            if (requestedProtocols.Count == 0)
+            if ((requestedProtocols.Count == 0) || !requestedProtocols.Contains("ship"))
             {
-                errorMessage = "No protocol header message!";
+                return false;
             }
             else
             {
-                if (!requestedProtocols.Contains("ship"))
-                {
-                    errorMessage = "Protocol not supported!";
-                }
-                else
-                {
-                    return true;
-                }
+                return true;
             }
-
-            // request for unsupported protocols are accepted and closed
-            var socket = await httpContext.WebSockets.AcceptWebSocketAsync().ConfigureAwait(false);
-            await socket.CloseOutputAsync(WebSocketCloseStatus.ProtocolError, errorMessage, CancellationToken.None).ConfigureAwait(false);
-
-            return false;
         }
 
-        private async Task<string> ReceiveDataAsync(WebSocket webSocket, string connectedNodeName)
+        private async Task SendAndReceive(WebSocket webSocket)
         {
             try
             {
-                ArraySegment<byte> data = new ArraySegment<byte>(new byte[1024]);
-                WebSocketReceiveResult result;
-                string payloadString = string.Empty;
-
-                do
+                while (webSocket.State == WebSocketState.Open)
                 {
-                    result = await webSocket.ReceiveAsync(data, CancellationToken.None).ConfigureAwait(false);
-
+                    byte[] buffer = new byte[1024];
+                    WebSocketReceiveResult result = await webSocket.ReceiveAsync(buffer, CancellationToken.None).ConfigureAwait(false);
                     if (result.CloseStatus.HasValue)
                     {
-                        if (webSocket != connectedNodes[connectedNodeName].WebSocket)
-                        {
-                            if (webSocket.State != WebSocketState.CloseReceived)
-                            {
-                                await webSocket.CloseOutputAsync(WebSocketCloseStatus.NormalClosure, "New web request message", CancellationToken.None).ConfigureAwait(false);
-                            }
-                        }
-                        else
-                        {
-                            await CloseConnectionAsync(connectedNodeName, webSocket).ConfigureAwait(false);
-                        }
-
-                        return null;
+                        break;
                     }
 
-                    payloadString += Encoding.UTF8.GetString(data.Array, 0, result.Count);
-                }
-                while (!result.EndOfMessage);
-
-                return payloadString;
-            }
-            catch (WebSocketException websocex)
-            {
-                if (webSocket != connectedNodes[connectedNodeName].WebSocket)
-                {
-                    Console.WriteLine($"Websocket exception occured in an old socket while receiving payload from connected node {connectedNodeName}. Error : {websocex.Message}");
-                }
-                else
-                {
-                    Console.WriteLine("Exception: " + websocex.Message);
+                    // TODO: Handle payload
+                        
+                    await webSocket.SendAsync(buffer, WebSocketMessageType.Binary, true, CancellationToken.None).ConfigureAwait(false);
                 }
             }
             catch (Exception ex)
             {
                 Console.WriteLine("Exception: " + ex.Message);
             }
-
-            return null;
         }
 
         private async Task CloseConnectionAsync(string connectedNodeName, WebSocket webSocket)
         {
             try
             {
-                if (connectedNodes.TryRemove(connectedNodeName, out WSClientConnection connectedNode))
-                {
-                    Console.WriteLine($"Removed connected node {connectedNodeName}");
-                }
-                else
-                {
-                    Console.WriteLine($"Cannot remove connected node {connectedNodeName}");
-                }
-
-                await webSocket.CloseOutputAsync(WebSocketCloseStatus.NormalClosure, "Client requested closure!", CancellationToken.None).ConfigureAwait(false);
-                Console.WriteLine($"Closed websocket for connectedNode {connectedNodeName}. Remaining active connectedNodes : {connectedNodes.Count}");
-
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine("Exception: " + ex.Message);
-            }
-        }
-
-        private async Task HandlePayloadAsync(string connectedNodeName, WebSocket webSocket)
-        {
-            while (webSocket.State == WebSocketState.Open)
-            {
-                try
-                {
-                    string payload = await ReceiveDataAsync(webSocket, connectedNodeName).ConfigureAwait(false);
-                    if (!string.IsNullOrEmpty(payload))
-                    {
-                        // TODO: process payload
-                        string response = payload; // simple echo for now
-
-                        await SendResponseAsync(connectedNodeName, response, webSocket).ConfigureAwait(false);
-                    }
-                }
-                catch (Exception ex)
-                {
-                    Console.WriteLine("Exception: " + ex.Message);
-                }
-            }
-        }
-
-        private async Task SendResponseAsync(string connectedNodeName, string payload, WebSocket webSocket)
-        {
-            var connectedNode = connectedNodes[connectedNodeName];
-
-            try
-            {
-                connectedNode.WebsocketBusy = true;
-
-                byte[] data = Encoding.UTF8.GetBytes(payload);
-
-                if (webSocket.State == WebSocketState.Open)
-                {
-                    await webSocket.SendAsync(data, WebSocketMessageType.Text, true, CancellationToken.None).ConfigureAwait(false);
-                }
+                await webSocket.CloseOutputAsync(WebSocketCloseStatus.NormalClosure, "Closing!", CancellationToken.None).ConfigureAwait(false);
             }
             catch (Exception ex)
             {
                 Console.WriteLine("Exception: " + ex.Message);
             }
 
-            connectedNode.WebsocketBusy = false;
+            connectedNodes.TryRemove(connectedNodeName, out _);
+
+            Console.WriteLine($"Closed websocket for connectedNode {connectedNodeName}. Remaining active connectedNodes : {connectedNodes.Count}");
         }
     }
 }
