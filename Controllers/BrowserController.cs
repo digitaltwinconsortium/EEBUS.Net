@@ -142,6 +142,79 @@ namespace EEBUS.Controllers
             }
         }
 
+        [HttpPost]
+        public async Task<IActionResult> SendData(object dataToSend)
+        {
+            try
+            {
+                foreach (string key in Request.Form.Keys)
+                {
+                    if (key.Contains("EEBUS:"))
+                    {
+                        string[] parts = key.Split(' ');
+                        _model.Name = parts[1];
+                        _model.Id = parts[2];
+                        _model.Url = parts[3];
+                        break;
+                    }
+                }
+
+                if (_wsClient.State == WebSocketState.Open)
+                {
+                    // send data message
+                    SHIPDataMessage dataMessage = new SHIPDataMessage();
+                    dataMessage.data.header.protocolId = "spine";
+                    dataMessage.data.payload = dataToSend;
+                    
+                    byte[] dataMessageSerialized = Encoding.UTF8.GetBytes(JsonConvert.SerializeObject(dataMessage));
+                    byte[] dataMessageBuffer = new byte[dataMessageSerialized.Length + 1];
+
+                    dataMessageBuffer[0] = SHIPMessageType.DATA;
+                    Buffer.BlockCopy(dataMessageSerialized, 0, dataMessageBuffer, 1, dataMessageSerialized.Length);
+
+                    await _wsClient.SendAsync(dataMessageBuffer, WebSocketMessageType.Binary, true, new CancellationTokenSource(SHIPMessageTimeout.CMI_TIMEOUT).Token).ConfigureAwait(false);
+
+                    // wait for data response message from server
+                    byte[] dataResponse = new byte[1024];
+                    WebSocketReceiveResult result = await _wsClient.ReceiveAsync(dataResponse, new CancellationTokenSource(SHIPMessageTimeout.CMI_TIMEOUT).Token).ConfigureAwait(false);
+                    if (result.MessageType == WebSocketMessageType.Close)
+                    {
+                        return await Disconnect().ConfigureAwait(false);
+                    }
+
+                    if ((result.Count < 2) || (dataResponse[0] != SHIPMessageType.DATA))
+                    {
+                        throw new Exception("Data message expected!");
+                    }
+
+                    byte[] dataResponseMessageBuffer = new byte[result.Count - 1];
+                    Buffer.BlockCopy(dataResponse, 1, dataResponseMessageBuffer, 0, result.Count - 1);
+
+                    var settings = new JsonSerializerSettings
+                    {
+                        NullValueHandling = NullValueHandling.Include,
+                        MissingMemberHandling = MissingMemberHandling.Error
+                    };
+
+                    SHIPDataMessage dataMessageReceived = JsonConvert.DeserializeObject<SHIPDataMessage>(Encoding.UTF8.GetString(dataResponseMessageBuffer), settings);
+                    if (dataMessageReceived == null)
+                    {
+                        throw new Exception("Data message parsing failed!");
+                    }
+
+                    return View("Connected", _model);
+                }
+                else
+                {
+                    return await Disconnect().ConfigureAwait(false);
+                }
+            }
+            catch (Exception ex)
+            {
+                return await Disconnect(ex.Message).ConfigureAwait(false);
+            }
+        }
+
         private async Task<bool> InitPhase()
         {
             // send init request message

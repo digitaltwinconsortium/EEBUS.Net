@@ -178,6 +178,18 @@ namespace EEBUS
                             break;
 
                         case SHIPMessageType.DATA:
+                            byte[] dataMessageBuffer = new byte[result.Count - 1];
+                            Buffer.BlockCopy(receiveBuffer, 1, dataMessageBuffer, 0, result.Count - 1);
+
+                            SHIPDataMessage dataMessageReceived = JsonConvert.DeserializeObject<SHIPDataMessage>(Encoding.UTF8.GetString(dataMessageBuffer), settings);
+                            if ((dataMessageReceived != null) && (dataMessageReceived.data != null))
+                            {
+                                if (!await HandleDataMessage(webSocket, dataMessageReceived.data).ConfigureAwait(false))
+                                {
+                                    throw new Exception("Data message aborted!");
+                                }
+                            }
+
                             break;
 
                         case SHIPMessageType.END:
@@ -375,6 +387,11 @@ namespace EEBUS
 
                 throw;
             }
+        }
+
+        private Task<bool> HandleDataMessage(WebSocket webSocket, DataType data)
+        {
+            throw new NotImplementedException();
         }
 
         private async Task CloseConnectionAsync(string connectedNodeName, WebSocket webSocket)

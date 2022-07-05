@@ -16,6 +16,11 @@ namespace EEBUS.Enums
         public MessageProtocolHandshakeErrorType messageProtocolHandshakeError { get; set; } = new MessageProtocolHandshakeErrorType();
     }
 
+    public class SHIPDataMessage
+    {
+        public DataType data { get; set; } = new DataType();
+    }
+
     public class SHIPMessageType
     {
         public const byte INIT = 0;

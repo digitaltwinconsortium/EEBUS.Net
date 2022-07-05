@@ -13,8 +13,6 @@ namespace EEBUS.Models
 
         public string Id { get; set; }
 
-        public string LastMessage { get; set; }
-
         public string Error { get; set; }
 
         public override bool Equals(object obj)
