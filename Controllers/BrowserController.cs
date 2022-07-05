@@ -98,7 +98,6 @@ namespace EEBUS.Controllers
         [HttpPost]
         public async Task<IActionResult> Accept()
         {
-            bool helloPhase = false;
             try
             {
                 foreach (string key in Request.Form.Keys)
@@ -115,83 +114,19 @@ namespace EEBUS.Controllers
 
                 if (_wsClient.State == WebSocketState.Open)
                 {
-                    // send init request message
-                    byte[] initRequest = new byte[2];
-                    initRequest[0] = SHIPMessageType.INIT;
-                    initRequest[1] = SHIPMessageValue.CMI_HEAD;
-                    await _wsClient.SendAsync(initRequest, WebSocketMessageType.Binary, true, new CancellationTokenSource(SHIPMessageTimeout.CMI_TIMEOUT).Token).ConfigureAwait(false);
-
-                    // wait for init response message from server
-                    byte[] initResponse = new byte[2]; 
-                    WebSocketReceiveResult result = await _wsClient.ReceiveAsync(initResponse, new CancellationTokenSource(SHIPMessageTimeout.CMI_TIMEOUT).Token).ConfigureAwait(false);
-                    if (result.MessageType == WebSocketMessageType.Close)
+                    if (!await InitPhase().ConfigureAwait(false))
                     {
                         return await Disconnect().ConfigureAwait(false);
                     }
 
-                    if ((initResponse[0] != SHIPMessageType.INIT) || (initResponse[1] != SHIPMessageValue.CMI_HEAD))
+                    if (!await HelloPhase().ConfigureAwait(false))
                     {
-                        throw new Exception("Expected init response message!");
+                        return await Disconnect().ConfigureAwait(false);
                     }
 
-                    // send connection data preparation ("hello" message)
-                    helloPhase = true;
-                    ConnectionHelloType helloMessage = new ConnectionHelloType();
-                    helloMessage.phase = ConnectionHelloPhaseType.ready;
-                    byte[] helloMessageSerialized = Encoding.UTF8.GetBytes(JsonConvert.SerializeObject(helloMessage));
-
-                    byte[] helloMessageBuffer = new byte[helloMessageSerialized.Length + 1];
-                    helloMessageBuffer[0] = SHIPMessageType.CONTROL; 
-                    Buffer.BlockCopy(helloMessageSerialized, 0, helloMessageBuffer, 1, helloMessageSerialized.Length);
-                    await _wsClient.SendAsync(helloMessageBuffer, WebSocketMessageType.Binary, true, new CancellationTokenSource(SHIPMessageTimeout.CMI_TIMEOUT).Token).ConfigureAwait(false);
-
-                    // wait for hello response message from server
-                    int numProlongsReceived = 0;
-                    while (helloPhase)
+                    if (!await HandshakePhase().ConfigureAwait(false))
                     {
-                        byte[] helloResponse = new byte[256];
-                        result = await _wsClient.ReceiveAsync(helloResponse, new CancellationTokenSource(SHIPMessageTimeout.T_HELLO_INIT).Token).ConfigureAwait(false);
-                        if (result.MessageType == WebSocketMessageType.Close)
-                        {
-                            return await Disconnect().ConfigureAwait(false);
-                        }
-
-                        if ((result.Count < 2) || (helloResponse[0] != SHIPMessageType.CONTROL))
-                        {
-                            throw new Exception("Expected hello message!");
-                        }
-
-                        byte[] helloResponseMessageBuffer = new byte[result.Count - 1];
-                        Buffer.BlockCopy(helloResponse, 1, helloResponseMessageBuffer, 0, result.Count - 1);
-                        ConnectionHelloType helloMessageReceived = JsonConvert.DeserializeObject<ConnectionHelloType>(Encoding.UTF8.GetString(helloResponseMessageBuffer));
-                        switch (helloMessageReceived.phase)
-                        {
-                            case ConnectionHelloPhaseType.ready:
-                                // all good, we can move on
-                                helloPhase = false;
-                                break;
-
-                            case ConnectionHelloPhaseType.aborted:
-                                return await Disconnect("Hello phase aborted by server!").ConfigureAwait(false);
-
-                            case ConnectionHelloPhaseType.pending:
-
-                                if (helloMessageReceived.prolongationRequestSpecified)
-                                {
-                                    // the server needs more time, send a hello update message
-                                    numProlongsReceived++;
-                                    if (numProlongsReceived > 2)
-                                    {
-                                        throw new Exception("More than 2 prolong requests received, aborting!");
-                                    }
-
-                                    await _wsClient.SendAsync(helloMessageBuffer, WebSocketMessageType.Binary, true, new CancellationTokenSource(SHIPMessageTimeout.T_HELLO_PROLONG_WAITING_GAP).Token).ConfigureAwait(false);
-                                }
-                              
-                                break;
-
-                            default: throw new Exception("Invalid hello sub-state received!");
-                        }
+                        return await Disconnect().ConfigureAwait(false);
                     }
 
                     return View("Connected", _model);
@@ -203,27 +138,241 @@ namespace EEBUS.Controllers
             }
             catch (Exception ex)
             {
-                if (helloPhase)
-                {
-                    try
-                    {
-                        // send hello abort message
-                        ConnectionHelloType helloMessage = new ConnectionHelloType();
-                        helloMessage.phase = ConnectionHelloPhaseType.aborted;
-                        byte[] helloMessageSerialized = Encoding.UTF8.GetBytes(JsonConvert.SerializeObject(helloMessage));
+                return await Disconnect(ex.Message).ConfigureAwait(false);
+            }
+        }
 
-                        byte[] helloMessageBuffer = new byte[helloMessageSerialized.Length + 1];
-                        helloMessageBuffer[0] = SHIPMessageType.CONTROL;
-                        Buffer.BlockCopy(helloMessageSerialized, 0, helloMessageBuffer, 1, helloMessageSerialized.Length);
-                        await _wsClient.SendAsync(helloMessageBuffer, WebSocketMessageType.Binary, true, new CancellationTokenSource(SHIPMessageTimeout.CMI_TIMEOUT).Token).ConfigureAwait(false);
-                    }
-                    catch (Exception)
+        private async Task<bool> InitPhase()
+        {
+            // send init request message
+            byte[] initRequest = new byte[2];
+            initRequest[0] = SHIPMessageType.INIT;
+            initRequest[1] = SHIPMessageValue.CMI_HEAD;
+
+            await _wsClient.SendAsync(initRequest, WebSocketMessageType.Binary, true, new CancellationTokenSource(SHIPMessageTimeout.CMI_TIMEOUT).Token).ConfigureAwait(false);
+
+            // wait for init response message from server
+            byte[] initResponse = new byte[2];
+            WebSocketReceiveResult result = await _wsClient.ReceiveAsync(initResponse, new CancellationTokenSource(SHIPMessageTimeout.CMI_TIMEOUT).Token).ConfigureAwait(false);
+            if (result.MessageType == WebSocketMessageType.Close)
+            {
+                return false;
+            }
+
+            if ((initResponse[0] != SHIPMessageType.INIT) || (initResponse[1] != SHIPMessageValue.CMI_HEAD))
+            {
+                throw new Exception("Expected init response message!");
+            }
+
+            return true;
+        }
+
+        private async Task<bool> HelloPhase()
+        {
+            try
+            {
+                // send connection data preparation ("hello" message)
+                bool helloPhase = true;
+
+                SHIPHelloMessage helloMessage = new SHIPHelloMessage();
+                helloMessage.connectionHello.phase = ConnectionHelloPhaseType.ready;
+
+                byte[] helloMessageSerialized = Encoding.UTF8.GetBytes(JsonConvert.SerializeObject(helloMessage));
+                byte[] helloMessageBuffer = new byte[helloMessageSerialized.Length + 1];
+
+                helloMessageBuffer[0] = SHIPMessageType.CONTROL;
+                Buffer.BlockCopy(helloMessageSerialized, 0, helloMessageBuffer, 1, helloMessageSerialized.Length);
+
+                await _wsClient.SendAsync(helloMessageBuffer, WebSocketMessageType.Binary, true, new CancellationTokenSource(SHIPMessageTimeout.CMI_TIMEOUT).Token).ConfigureAwait(false);
+
+                // wait for hello response message from server
+                int numProlongsReceived = 0;
+                while (helloPhase)
+                {
+                    byte[] helloResponse = new byte[256];
+                    WebSocketReceiveResult result = await _wsClient.ReceiveAsync(helloResponse, new CancellationTokenSource(SHIPMessageTimeout.T_HELLO_INIT).Token).ConfigureAwait(false);
+                    if (result.MessageType == WebSocketMessageType.Close)
                     {
-                        // do nothing
+                        return false;
+                    }
+
+                    if ((result.Count < 2) || (helloResponse[0] != SHIPMessageType.CONTROL))
+                    {
+                        throw new Exception("Expected hello message!");
+                    }
+
+                    byte[] helloResponseMessageBuffer = new byte[result.Count - 1];
+                    Buffer.BlockCopy(helloResponse, 1, helloResponseMessageBuffer, 0, result.Count - 1);
+
+                    var settings = new JsonSerializerSettings
+                    {
+                        NullValueHandling = NullValueHandling.Include,
+                        MissingMemberHandling = MissingMemberHandling.Error
+                    };
+
+                    SHIPHelloMessage helloMessageReceived = JsonConvert.DeserializeObject<SHIPHelloMessage>(Encoding.UTF8.GetString(helloResponseMessageBuffer), settings);
+                    if (helloMessageReceived == null)
+                    {
+                        throw new Exception("Hello message parsing failed!");
+                    }
+
+                    switch (helloMessageReceived.connectionHello.phase)
+                    {
+                        case ConnectionHelloPhaseType.ready:
+                            // all good, we can move on
+                            helloPhase = false;
+                            break;
+
+                        case ConnectionHelloPhaseType.aborted:
+                            // server aborted
+                            return false;
+
+                        case ConnectionHelloPhaseType.pending:
+
+                            if (helloMessageReceived.connectionHello.prolongationRequestSpecified)
+                            {
+                                // the server needs more time, send a hello update message
+                                numProlongsReceived++;
+                                if (numProlongsReceived > 2)
+                                {
+                                    throw new Exception("More than 2 prolong requests received, aborting!");
+                                }
+
+                                await _wsClient.SendAsync(helloMessageBuffer, WebSocketMessageType.Binary, true, new CancellationTokenSource(SHIPMessageTimeout.T_HELLO_PROLONG_WAITING_GAP).Token).ConfigureAwait(false);
+                            }
+
+                            break;
+
+                        default: throw new Exception("Invalid hello sub-state received!");
                     }
                 }
 
-                return await Disconnect(ex.Message).ConfigureAwait(false);
+                return true;
+            }
+            catch (Exception)
+            {
+                try
+                {
+                    // send hello abort message
+                    SHIPHelloMessage helloMessage = new SHIPHelloMessage();
+                    helloMessage.connectionHello.phase = ConnectionHelloPhaseType.aborted;
+
+                    byte[] helloMessageSerialized = Encoding.UTF8.GetBytes(JsonConvert.SerializeObject(helloMessage));
+                    byte[] helloMessageBuffer = new byte[helloMessageSerialized.Length + 1];
+
+                    helloMessageBuffer[0] = SHIPMessageType.CONTROL;
+                    Buffer.BlockCopy(helloMessageSerialized, 0, helloMessageBuffer, 1, helloMessageSerialized.Length);
+                    
+                    await _wsClient.SendAsync(helloMessageBuffer, WebSocketMessageType.Binary, true, new CancellationTokenSource(SHIPMessageTimeout.CMI_TIMEOUT).Token).ConfigureAwait(false);
+                }
+                catch (Exception)
+                {
+                    // do nothing
+                }
+
+                throw;
+            }
+        }
+
+        private async Task<bool> HandshakePhase()
+        {
+            try
+            {
+                // send protocol handshake message
+                SHIPHandshakeMessage handshakeMessage = new SHIPHandshakeMessage();
+                handshakeMessage.messageProtocolHandshake.handshakeType = ProtocolHandshakeTypeType.announceMax;
+                handshakeMessage.messageProtocolHandshake.version = new MessageProtocolHandshakeTypeVersion
+                {
+                    major = 1,
+                    minor = 0
+                };
+                handshakeMessage.messageProtocolHandshake.formats = new string[] { SHIPMessageFormat.JSON_UTF8 };
+
+                byte[] handshakeMessageSerialized = Encoding.UTF8.GetBytes(JsonConvert.SerializeObject(handshakeMessage));
+                byte[] handshakeMessageBuffer = new byte[handshakeMessageSerialized.Length + 1];
+
+                handshakeMessageBuffer[0] = SHIPMessageType.CONTROL;
+                Buffer.BlockCopy(handshakeMessageSerialized, 0, handshakeMessageBuffer, 1, handshakeMessageSerialized.Length);
+
+                await _wsClient.SendAsync(handshakeMessageBuffer, WebSocketMessageType.Binary, true, new CancellationTokenSource(SHIPMessageTimeout.CMI_TIMEOUT).Token).ConfigureAwait(false);
+
+                // wait for handshake response message from server
+                byte[] handshakeResponse = new byte[256];
+                WebSocketReceiveResult result = await _wsClient.ReceiveAsync(handshakeResponse, new CancellationTokenSource(SHIPMessageTimeout.CMI_TIMEOUT).Token).ConfigureAwait(false);
+                if (result.MessageType == WebSocketMessageType.Close)
+                {
+                    return false;
+                }
+
+                if ((result.Count < 2) || (handshakeResponse[0] != SHIPMessageType.CONTROL))
+                {
+                    throw new Exception("Handshake message expected!");
+                }
+
+                byte[] handshakeResponseMessageBuffer = new byte[result.Count - 1];
+                Buffer.BlockCopy(handshakeResponse, 1, handshakeResponseMessageBuffer, 0, result.Count - 1);
+
+                var settings = new JsonSerializerSettings
+                {
+                    NullValueHandling = NullValueHandling.Include,
+                    MissingMemberHandling = MissingMemberHandling.Error
+                };
+
+                SHIPHandshakeMessage handshakeMessageReceived = JsonConvert.DeserializeObject<SHIPHandshakeMessage>(Encoding.UTF8.GetString(handshakeResponseMessageBuffer), settings);
+                if (handshakeMessageReceived == null)
+                {
+                    throw new Exception("Handshake message parsing failed!");
+                }
+
+                if (handshakeMessageReceived.messageProtocolHandshake.handshakeType != ProtocolHandshakeTypeType.select)
+                {
+                    throw new Exception("Protocol version selection expected!");
+                }
+
+                if (handshakeMessageReceived.messageProtocolHandshake.version.major != 1 && handshakeMessageReceived.messageProtocolHandshake.version.minor != 0)
+                {
+                    throw new Exception("Protocol version mismatch!");
+                }
+
+                if ((handshakeMessageReceived.messageProtocolHandshake.formats.Length > 0) && (handshakeMessageReceived.messageProtocolHandshake.formats[0] == SHIPMessageFormat.JSON_UTF8))
+                {
+                    return true;
+                }
+                else
+                {
+                    throw new Exception("Protocol format mismatch!");
+                }
+            }
+            catch (Exception ex)
+            {
+                try
+                {
+                    // send handshake error message
+                    SHIPHandshakeErrorMessage handshakeErrorMessage = new SHIPHandshakeErrorMessage();
+
+                    if (ex.Message.Contains("mismatch"))
+                    {
+                        handshakeErrorMessage.messageProtocolHandshakeError.error = SHIPHandshakeError.SELECTION_MISMATCH;
+                    }
+                    else
+                    {
+                        handshakeErrorMessage.messageProtocolHandshakeError.error = SHIPHandshakeError.UNEXPECTED_MESSAGE;
+                    }
+                    
+                    byte[] handshakeMessageSerialized = Encoding.UTF8.GetBytes(JsonConvert.SerializeObject(handshakeErrorMessage));
+                    byte[] handshakeMessageBuffer = new byte[handshakeMessageSerialized.Length + 1];
+
+                    handshakeMessageBuffer[0] = SHIPMessageType.CONTROL;
+                    Buffer.BlockCopy(handshakeMessageSerialized, 0, handshakeMessageBuffer, 1, handshakeMessageSerialized.Length);
+
+                    await _wsClient.SendAsync(handshakeMessageBuffer, WebSocketMessageType.Binary, true, new CancellationTokenSource(SHIPMessageTimeout.CMI_TIMEOUT).Token).ConfigureAwait(false);
+                }
+                catch (Exception)
+                {
+                    // do nothing
+                }
+
+                throw;
             }
         }
 

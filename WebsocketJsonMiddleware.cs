@@ -110,6 +110,12 @@ namespace EEBUS
                     }
 
                     // parse EEBUS payload
+                    var settings = new JsonSerializerSettings
+                    {
+                        NullValueHandling = NullValueHandling.Include,
+                        MissingMemberHandling = MissingMemberHandling.Error
+                    };
+
                     switch (receiveBuffer[0])
                     {
                         case SHIPMessageType.INIT:
@@ -133,24 +139,44 @@ namespace EEBUS
                             Buffer.BlockCopy(receiveBuffer, 1, controlMessageBuffer, 0, result.Count - 1);
 
                             // there are 5 control messages defined: Hello, ProtocolHandshake, ProtocolHandShakeError, PINVerification and PINVerificationError
-                            ConnectionHelloType helloMessageReceived = null;
+                            // we ignore PINVerification request messages
+
+                            SHIPHelloMessage helloMessageReceived = null;
                             try
                             {
-                                helloMessageReceived = JsonConvert.DeserializeObject<ConnectionHelloType>(Encoding.UTF8.GetString(controlMessageBuffer));
+                                helloMessageReceived = JsonConvert.DeserializeObject<SHIPHelloMessage>(Encoding.UTF8.GetString(controlMessageBuffer), settings);
                             }
                             catch (Exception)
                             {
                                 // do nothing
                             }
 
-                            if (helloMessageReceived != null)
+                            if ((helloMessageReceived != null) && (helloMessageReceived.connectionHello != null))
                             {
-                                if (!await HandleHelloMessage(webSocket, helloMessageReceived).ConfigureAwait(false))
+                                if (!await HandleHelloMessage(webSocket, helloMessageReceived.connectionHello).ConfigureAwait(false))
                                 {
                                     throw new Exception("Hello phase aborted!");
                                 }
                             }
-                                                       
+
+                            SHIPHandshakeMessage handshakeMessageReceived = null;
+                            try
+                            {
+                                handshakeMessageReceived = JsonConvert.DeserializeObject<SHIPHandshakeMessage>(Encoding.UTF8.GetString(controlMessageBuffer), settings);
+                            }
+                            catch (Exception)
+                            {
+                                // do nothing
+                            }
+
+                            if ((handshakeMessageReceived != null) && (handshakeMessageReceived.messageProtocolHandshake != null))
+                            {
+                                if (!await HandleHandshakeMessage(webSocket, handshakeMessageReceived.messageProtocolHandshake).ConfigureAwait(false))
+                                {
+                                    throw new Exception("Handshake phase aborted!");
+                                }
+                            }
+
                             break;
 
                         case SHIPMessageType.DATA:
@@ -172,8 +198,8 @@ namespace EEBUS
 
         private async Task<bool> HandleHelloMessage(WebSocket webSocket, ConnectionHelloType helloMessageReceived)
         {
-            ConnectionHelloType helloMessage = new ConnectionHelloType();
-            helloMessage.phase = ConnectionHelloPhaseType.ready;
+            SHIPHelloMessage helloMessage = new SHIPHelloMessage();
+            helloMessage.connectionHello.phase = ConnectionHelloPhaseType.ready;
             byte[] helloMessageSerialized = Encoding.UTF8.GetBytes(JsonConvert.SerializeObject(helloMessage));
             byte[] helloMessageBuffer = new byte[helloMessageSerialized.Length + 1];
             helloMessageBuffer[0] = SHIPMessageType.CONTROL;
@@ -204,7 +230,7 @@ namespace EEBUS
                             if (numProlongsReceived > 2)
                             {
                                 Console.WriteLine("More than 2 prolong requests received, aborting!");
-                                helloMessage.phase = ConnectionHelloPhaseType.aborted;
+                                helloMessage.connectionHello.phase = ConnectionHelloPhaseType.aborted;
                                 helloMessageSerialized = Encoding.UTF8.GetBytes(JsonConvert.SerializeObject(helloMessage));
                                 helloMessageBuffer = new byte[helloMessageSerialized.Length + 1];
                                 Buffer.BlockCopy(helloMessageSerialized, 0, helloMessageBuffer, 1, helloMessageSerialized.Length);
@@ -216,7 +242,7 @@ namespace EEBUS
                             }
 
                             // send "ready" message
-                            await webSocket.SendAsync(helloMessageBuffer, WebSocketMessageType.Binary, true, new CancellationTokenSource(SHIPMessageTimeout.T_HELLO_PROLONG_WAITING_GAP).Token).ConfigureAwait(false);
+                            await webSocket.SendAsync(helloMessageBuffer, WebSocketMessageType.Binary, true, new CancellationTokenSource(SHIPMessageTimeout.CMI_TIMEOUT).Token).ConfigureAwait(false);
                         }
                         else
                         {
@@ -228,6 +254,72 @@ namespace EEBUS
 
                     default: throw new Exception("Invalid hello sub-state received!");
                 }
+            }
+        }
+
+        private async Task<bool> HandleHandshakeMessage(WebSocket webSocket, MessageProtocolHandshakeType handshakeMessageReceived)
+        {
+            try
+            {
+                if (handshakeMessageReceived.handshakeType != ProtocolHandshakeTypeType.announceMax)
+                {
+                    throw new Exception("Protocol version max announcement expected!");
+                }
+
+                if (handshakeMessageReceived.version.major != 1 && handshakeMessageReceived.version.minor != 0)
+                {
+                    throw new Exception("Protocol version mismatch!");
+                }
+
+                if ((handshakeMessageReceived.formats.Length > 0) && (handshakeMessageReceived.formats[0] == SHIPMessageFormat.JSON_UTF8))
+                {
+                    // send protocol handshake response message
+                    SHIPHandshakeMessage handshakeMessage = new SHIPHandshakeMessage();
+                    handshakeMessage.messageProtocolHandshake.handshakeType = ProtocolHandshakeTypeType.select;
+                    handshakeMessage.messageProtocolHandshake.version = new MessageProtocolHandshakeTypeVersion
+                    {
+                        major = 1,
+                        minor = 0
+                    };
+                    handshakeMessage.messageProtocolHandshake.formats = new string[] { SHIPMessageFormat.JSON_UTF8 };
+
+                    byte[] handshakeMessageSerialized = Encoding.UTF8.GetBytes(JsonConvert.SerializeObject(handshakeMessage));
+                    byte[] handshakeMessageBuffer = new byte[handshakeMessageSerialized.Length + 1];
+
+                    handshakeMessageBuffer[0] = SHIPMessageType.CONTROL;
+                    Buffer.BlockCopy(handshakeMessageSerialized, 0, handshakeMessageBuffer, 1, handshakeMessageSerialized.Length);
+
+                    await webSocket.SendAsync(handshakeMessageBuffer, WebSocketMessageType.Binary, true, new CancellationTokenSource(SHIPMessageTimeout.CMI_TIMEOUT).Token).ConfigureAwait(false);
+
+                    return true;
+                }
+                else
+                {
+                    throw new Exception("Protocol format mismatch!");
+                }
+            }
+            catch (Exception ex)
+            { 
+                SHIPHandshakeErrorMessage handshakeErrorMessage = new SHIPHandshakeErrorMessage();
+
+                if (ex.Message.Contains("mismatch"))
+                {
+                    handshakeErrorMessage.messageProtocolHandshakeError.error = SHIPHandshakeError.SELECTION_MISMATCH;
+                }
+                else
+                {
+                    handshakeErrorMessage.messageProtocolHandshakeError.error = SHIPHandshakeError.UNEXPECTED_MESSAGE;
+                }
+
+                byte[] handshakeErrorMessageSerialized = Encoding.UTF8.GetBytes(JsonConvert.SerializeObject(handshakeErrorMessage));
+                byte[] handshakeErrorMessageBuffer = new byte[handshakeErrorMessageSerialized.Length + 1];
+
+                handshakeErrorMessageBuffer[0] = SHIPMessageType.CONTROL;
+                Buffer.BlockCopy(handshakeErrorMessageSerialized, 0, handshakeErrorMessageBuffer, 1, handshakeErrorMessageSerialized.Length);
+
+                await webSocket.SendAsync(handshakeErrorMessageBuffer, WebSocketMessageType.Binary, true, new CancellationTokenSource(SHIPMessageTimeout.CMI_TIMEOUT).Token).ConfigureAwait(false);
+
+                throw;
             }
         }
 

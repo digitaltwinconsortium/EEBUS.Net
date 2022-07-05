@@ -1,5 +1,21 @@
-﻿namespace EEBUS.Enums
+﻿
+namespace EEBUS.Enums
 {
+    public class SHIPHelloMessage
+    {
+        public ConnectionHelloType connectionHello { get; set; } = new ConnectionHelloType();
+    }
+
+    public class SHIPHandshakeMessage
+    {
+        public MessageProtocolHandshakeType messageProtocolHandshake { get; set; } = new MessageProtocolHandshakeType();
+    }
+
+    public class SHIPHandshakeErrorMessage
+    {
+        public MessageProtocolHandshakeErrorType messageProtocolHandshakeError { get; set; } = new MessageProtocolHandshakeErrorType();
+    }
+
     public class SHIPMessageType
     {
         public const byte INIT = 0;
@@ -23,18 +39,16 @@
         public const byte CMI_HEAD = 0;
     }
 
-    enum SHIPConnectionModeInitialisation
+    public class SHIPMessageFormat
     {
-        CONNECTION_DATA_PREPARATION = 0
+        public const string JSON_UTF8 = "JSON-UTF8";
     }
 
-    enum SHIPMessageExchangeStates
+    public class SHIPHandshakeError
     {
-        SME_HELLO_STATE_READY_INIT,
-        SME_HELLO_STATE_READY_LISTEN,
-        SME_HELLO_STATE_READY_TIMEOUT,
-        SME_HELLO_STATE_PENDING_INIT,
-        SME_HELLO_STATE_PENDING_LISTEN,
-        SME_HELLO_STATE_PENDING_TIMEOUT
+        public const byte RFU = 0;
+        public const byte TIMEOUT = 1;
+        public const byte UNEXPECTED_MESSAGE = 2;
+        public const byte SELECTION_MISMATCH = 3;
     }
 }
