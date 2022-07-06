@@ -62,7 +62,7 @@ namespace EEBUS
                 connectedNodes.TryAdd(connectedNodeName, socket);
                 Console.WriteLine($"Now connected to {connectedNodeName}. Number of active connections: {connectedNodes.Count}");
 
-                await SendAndReceive(socket).ConfigureAwait(false);
+                await SendAndReceive(connectedNodeName, socket).ConfigureAwait(false);
                                 
                 // we're done, close and return
                 await CloseConnectionAsync(connectedNodeName, socket).ConfigureAwait(false);
@@ -89,7 +89,7 @@ namespace EEBUS
             }
         }
 
-        private async Task SendAndReceive(WebSocket webSocket)
+        private async Task SendAndReceive(string connectedNodeName, WebSocket webSocket)
         {
             try
             {
@@ -108,7 +108,11 @@ namespace EEBUS
                     }
 
                     // parse EEBUS payload
-                    var settings = new JsonSerializerSettings
+                    byte[] messageBuffer = new byte[result.Count - 1];
+                    Buffer.BlockCopy(receiveBuffer, 1, messageBuffer, 0, result.Count - 1);
+
+                    // setup JSON serializer settings
+                    JsonSerializerSettings jsonSettings = new JsonSerializerSettings
                     {
                         NullValueHandling = NullValueHandling.Include,
                         MissingMemberHandling = MissingMemberHandling.Error
@@ -117,7 +121,10 @@ namespace EEBUS
                     switch (receiveBuffer[0])
                     {
                         case SHIPMessageType.INIT:
-                            if (receiveBuffer[1] != SHIPMessageValue.CMI_HEAD)
+
+                            Console.WriteLine($"Init message received from {connectedNodeName}.");
+
+                            if (messageBuffer[0] != SHIPMessageValue.CMI_HEAD)
                             {
                                 throw new Exception("Expected SMI_HEAD payload in INIT message!");
                             }
@@ -133,55 +140,108 @@ namespace EEBUS
                             break;
 
                         case SHIPMessageType.CONTROL:
-                            byte[] controlMessageBuffer = new byte[result.Count - 1];
-                            Buffer.BlockCopy(receiveBuffer, 1, controlMessageBuffer, 0, result.Count - 1);
 
-                            // there are 5 control messages defined: Hello, ProtocolHandshake, ProtocolHandShakeError, PINVerification and PINVerificationError
-                            // we ignore PINVerification and PINVerificationError messages
+                            // there are 6 control messages defined: Hello, ProtocolHandshake, ProtocolHandShakeError, AccessMethodsRequest, PINVerification and PINVerificationError
+                            // Note: We ignore PINVerification and PINVerificationError messages
+                            bool controlMessageHandled = false;
 
                             SHIPHelloMessage helloMessageReceived = null;
                             try
                             {
-                                helloMessageReceived = JsonConvert.DeserializeObject<SHIPHelloMessage>(Encoding.UTF8.GetString(controlMessageBuffer), settings);
+                                helloMessageReceived = JsonConvert.DeserializeObject<SHIPHelloMessage>(Encoding.UTF8.GetString(messageBuffer), jsonSettings);
                             }
-                            catch (Exception)
+                            catch (Exception ex)
                             {
-                                // do nothing
+                                Console.WriteLine("Exception: " + ex.Message);
                             }
 
                             if ((helloMessageReceived != null) && (helloMessageReceived.connectionHello != null))
                             {
+                                Console.WriteLine($"Hello message received from {connectedNodeName}.");
+
                                 if (!await HandleHelloMessage(webSocket, helloMessageReceived.connectionHello).ConfigureAwait(false))
                                 {
-                                    throw new Exception("Hello phase aborted!");
+                                    throw new Exception("Hello aborted!");
                                 }
+
+                                controlMessageHandled = true;
                             }
 
                             SHIPHandshakeMessage handshakeMessageReceived = null;
                             try
                             {
-                                handshakeMessageReceived = JsonConvert.DeserializeObject<SHIPHandshakeMessage>(Encoding.UTF8.GetString(controlMessageBuffer), settings);
+                                handshakeMessageReceived = JsonConvert.DeserializeObject<SHIPHandshakeMessage>(Encoding.UTF8.GetString(messageBuffer), jsonSettings);
                             }
-                            catch (Exception)
+                            catch (Exception ex)
                             {
-                                // do nothing
+                                Console.WriteLine("Exception: " + ex.Message);
                             }
 
                             if ((handshakeMessageReceived != null) && (handshakeMessageReceived.messageProtocolHandshake != null))
                             {
+                                Console.WriteLine($"Handshake message received from {connectedNodeName}.");
+
                                 if (!await HandleHandshakeMessage(webSocket, handshakeMessageReceived.messageProtocolHandshake).ConfigureAwait(false))
                                 {
-                                    throw new Exception("Handshake phase aborted!");
+                                    throw new Exception("Handshake aborted!");
                                 }
+
+                                controlMessageHandled = true;
+                            }
+
+                            SHIPHandshakeErrorMessage handshakeErrorMessageReceived = null;
+                            try
+                            {
+                                handshakeErrorMessageReceived = JsonConvert.DeserializeObject<SHIPHandshakeErrorMessage>(Encoding.UTF8.GetString(messageBuffer), jsonSettings);
+                            }
+                            catch (Exception ex)
+                            {
+                                Console.WriteLine("Exception: " + ex.Message);
+                            }
+
+                            if ((handshakeErrorMessageReceived != null) && (handshakeErrorMessageReceived.messageProtocolHandshakeError != null))
+                            {
+                                Console.WriteLine($"Handshake error message received from {connectedNodeName} due to {handshakeErrorMessageReceived.messageProtocolHandshakeError.error}.");
+
+                                controlMessageHandled = true;
+
+                                throw new Exception("Handshake aborted!");
+                            }
+
+                            SHIPAccessMethodsMessage accessMethodsMessageReceived = null;
+                            try
+                            {
+                                accessMethodsMessageReceived = JsonConvert.DeserializeObject<SHIPAccessMethodsMessage>(Encoding.UTF8.GetString(messageBuffer), jsonSettings);
+                            }
+                            catch (Exception ex)
+                            {
+                                Console.WriteLine("Exception: " + ex.Message);
+                            }
+
+                            if ((accessMethodsMessageReceived != null) && (accessMethodsMessageReceived.accessMethodsRequest != null))
+                            {
+                                Console.WriteLine($"Access Methods message received from {connectedNodeName}.");
+
+                                if (!HandleAccessMethodsMessage(connectedNodeName, webSocket, accessMethodsMessageReceived.accessMethodsRequest))
+                                {
+                                    throw new Exception("Access methods received message aborted!");
+                                }
+
+                                controlMessageHandled = true;
+                            }
+
+                            if (!controlMessageHandled)
+                            {
+                                Console.WriteLine($"Control message from {connectedNodeName} ignored!");
                             }
 
                             break;
 
                         case SHIPMessageType.DATA:
-                            byte[] dataMessageBuffer = new byte[result.Count - 1];
-                            Buffer.BlockCopy(receiveBuffer, 1, dataMessageBuffer, 0, result.Count - 1);
 
-                            SHIPDataMessage dataMessageReceived = JsonConvert.DeserializeObject<SHIPDataMessage>(Encoding.UTF8.GetString(dataMessageBuffer), settings);
+                            Console.WriteLine($"Data message received from {connectedNodeName}.");
+
+                            SHIPDataMessage dataMessageReceived = JsonConvert.DeserializeObject<SHIPDataMessage>(Encoding.UTF8.GetString(messageBuffer), jsonSettings);
                             if ((dataMessageReceived != null) && (dataMessageReceived.data != null))
                             {
                                 if (!await HandleDataMessage(webSocket, dataMessageReceived.data).ConfigureAwait(false))
@@ -193,6 +253,17 @@ namespace EEBUS
                             break;
 
                         case SHIPMessageType.END:
+
+                            Console.WriteLine($"Close message received from {connectedNodeName}.");
+
+                            SHIPCloseMessage closeMessageReceived = JsonConvert.DeserializeObject<SHIPCloseMessage>(Encoding.UTF8.GetString(messageBuffer), jsonSettings);
+                            if ((closeMessageReceived != null) && (closeMessageReceived.connectionClose != null))
+                            {
+                                if (!await HandleCloseMessage(webSocket, closeMessageReceived.connectionClose).ConfigureAwait(false))
+                                {
+                                    throw new Exception("Close message aborted!");
+                                }
+                            }
                             break;
 
                         default:
@@ -380,18 +451,132 @@ namespace EEBUS
 
                     await webSocket.SendAsync(handshakeErrorMessageBuffer, WebSocketMessageType.Binary, true, new CancellationTokenSource(SHIPMessageTimeout.CMI_TIMEOUT).Token).ConfigureAwait(false);
                 }
-                catch (Exception)
+                catch (Exception innerEx)
                 {
-                    // do nothing
+                    Console.WriteLine("Exception: " + innerEx.Message);
                 }
 
                 throw;
             }
         }
 
-        private Task<bool> HandleDataMessage(WebSocket webSocket, DataType data)
+        private bool HandleAccessMethodsMessage(string connectedNodeName, WebSocket webSocket, AccessMethodsType accessMethods)
         {
-            throw new NotImplementedException();
+            try
+            {
+                // simply print the access methods to the console
+                if (accessMethods.dnsSd_mDns != null)
+                {
+                    Console.WriteLine($"Received access method mDNS from {connectedNodeName} with ID {accessMethods.id} at {accessMethods.dns.uri}.");
+                }
+
+                if (accessMethods.dns != null)
+                {
+                    Console.WriteLine($"Received access method DNS from {connectedNodeName} with ID {accessMethods.id} at {accessMethods.dns.uri}.");
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine("Exception: " + ex.Message);
+            }
+                
+            return true;
+        }
+
+        private async Task<bool> HandleDataMessage(WebSocket webSocket, DataType data)
+        {
+            try
+            {
+                if (data.header.protocolId != "spine")
+                {
+                    throw new Exception("SPINE protocol expected!");
+                }
+
+                // handle SPINE payload
+                if (!await HandleSpineMessage(webSocket, data.payload).ConfigureAwait(false))
+                {
+                    throw new Exception("Handle SPINE message failed!");
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine("Exception: " + ex.Message);
+            }
+
+            return true;
+        }
+
+        public async Task<bool> SendDataMessage(WebSocket webSocket, object payload)
+        {
+            try
+            {
+                // send data payload
+                SHIPDataMessage dataMessage = new SHIPDataMessage();
+                dataMessage.data.payload = payload;
+
+                byte[] dataMessageSerialized = Encoding.UTF8.GetBytes(JsonConvert.SerializeObject(dataMessage));
+                byte[] dataMessageBuffer = new byte[dataMessageSerialized.Length + 1];
+
+                dataMessageBuffer[0] = SHIPMessageType.DATA;
+                Buffer.BlockCopy(dataMessageSerialized, 0, dataMessageBuffer, 1, dataMessageSerialized.Length);
+
+                await webSocket.SendAsync(dataMessageBuffer, WebSocketMessageType.Binary, true, new CancellationTokenSource(SHIPMessageTimeout.CMI_TIMEOUT).Token).ConfigureAwait(false);
+
+                return true;
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine("Exception: " + ex.Message);
+                return false;
+            }
+        }
+
+        private async Task<bool> HandleSpineMessage(WebSocket webSocket, object payload)
+        {
+            // sinply print the SPINE payload to the console for now
+            Console.WriteLine($"SPINE data received: {payload}.");
+
+            // send the same message back for now
+            return await SendDataMessage(webSocket, payload).ConfigureAwait(false);
+        }
+
+        private async Task<bool> HandleCloseMessage(WebSocket webSocket, ConnectionCloseType connectionClose)
+        {
+            try
+            {
+                if (connectionClose.phase != ConnectionClosePhaseType.announce)
+                {
+                    throw new Exception("Close connection announcement expected!");
+                }
+
+                if (connectionClose.reasonSpecified && connectionClose.reason == ConnectionCloseReasonType.removedConnection)
+                {
+                    Console.WriteLine($"Received close connection request with removed connection reason");
+                }
+
+                if (connectionClose.reasonSpecified && connectionClose.reason == ConnectionCloseReasonType.unspecific)
+                {
+                    Console.WriteLine($"Received close connection request with unspecific reason");
+                }
+
+                // send confirmation back
+                SHIPCloseMessage closeMessage = new SHIPCloseMessage();
+                closeMessage.connectionClose.phase = ConnectionClosePhaseType.confirm;
+
+                byte[] closeMessageSerialized = Encoding.UTF8.GetBytes(JsonConvert.SerializeObject(closeMessage));
+                byte[] closeMessageBuffer = new byte[closeMessageSerialized.Length + 1];
+
+                closeMessageBuffer[0] = SHIPMessageType.END;
+                Buffer.BlockCopy(closeMessageSerialized, 0, closeMessageBuffer, 1, closeMessageSerialized.Length);
+
+                await webSocket.SendAsync(closeMessageBuffer, WebSocketMessageType.Binary, true, new CancellationTokenSource(SHIPMessageTimeout.CMI_TIMEOUT).Token).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine("Exception: " + ex.Message);
+            }
+
+            return true;
         }
 
         private async Task CloseConnectionAsync(string connectedNodeName, WebSocket webSocket)

@@ -143,7 +143,7 @@ namespace EEBUS.Controllers
         }
 
         [HttpPost]
-        public async Task<IActionResult> SendData(object dataToSend)
+        public async Task<IActionResult> SendData()
         {
             try
             {
@@ -163,8 +163,9 @@ namespace EEBUS.Controllers
                 {
                     // send data message
                     SHIPDataMessage dataMessage = new SHIPDataMessage();
+                    dataMessage.data.header = new HeaderType();
                     dataMessage.data.header.protocolId = "spine";
-                    dataMessage.data.payload = dataToSend;
+                    dataMessage.data.payload = "spine test message";
                     
                     byte[] dataMessageSerialized = Encoding.UTF8.GetBytes(JsonConvert.SerializeObject(dataMessage));
                     byte[] dataMessageBuffer = new byte[dataMessageSerialized.Length + 1];
@@ -197,9 +198,13 @@ namespace EEBUS.Controllers
                     };
 
                     SHIPDataMessage dataMessageReceived = JsonConvert.DeserializeObject<SHIPDataMessage>(Encoding.UTF8.GetString(dataResponseMessageBuffer), settings);
-                    if (dataMessageReceived == null)
+                    if ((dataMessageReceived == null) || (dataMessageReceived.data == null) || (dataMessageReceived.data.payload == null))
                     {
                         throw new Exception("Data message parsing failed!");
+                    }
+                    else
+                    {
+                        _model.LatestDataReceived = dataMessageReceived.data.payload.ToString();
                     }
 
                     return View("Connected", _model);
@@ -338,9 +343,9 @@ namespace EEBUS.Controllers
                     
                     await _wsClient.SendAsync(helloMessageBuffer, WebSocketMessageType.Binary, true, new CancellationTokenSource(SHIPMessageTimeout.CMI_TIMEOUT).Token).ConfigureAwait(false);
                 }
-                catch (Exception)
+                catch (Exception ex)
                 {
-                    // do nothing
+                    Console.WriteLine("Exception: " + ex.Message);
                 }
 
                 throw;
@@ -445,9 +450,9 @@ namespace EEBUS.Controllers
 
                     await _wsClient.SendAsync(handshakeMessageBuffer, WebSocketMessageType.Binary, true, new CancellationTokenSource(SHIPMessageTimeout.CMI_TIMEOUT).Token).ConfigureAwait(false);
                 }
-                catch (Exception)
+                catch (Exception innerEx)
                 {
-                    // do nothing
+                    Console.WriteLine("Exception: " + innerEx.Message);
                 }
 
                 throw;
@@ -461,6 +466,52 @@ namespace EEBUS.Controllers
             {
                 if (_wsClient != null)
                 {
+                    // send close message
+                    SHIPCloseMessage closeMessage = new SHIPCloseMessage();
+                    closeMessage.connectionClose.phase = ConnectionClosePhaseType.announce;
+                    
+                    byte[] closeMessageSerialized = Encoding.UTF8.GetBytes(JsonConvert.SerializeObject(closeMessage));
+                    byte[] closeMessageBuffer = new byte[closeMessageSerialized.Length + 1];
+
+                    closeMessageBuffer[0] = SHIPMessageType.END;
+                    Buffer.BlockCopy(closeMessageSerialized, 0, closeMessageBuffer, 1, closeMessageSerialized.Length);
+
+                    await _wsClient.SendAsync(closeMessageBuffer, WebSocketMessageType.Binary, true, new CancellationTokenSource(SHIPMessageTimeout.CMI_TIMEOUT).Token).ConfigureAwait(false);
+
+                    // wait for close response message from server
+                    byte[] closeResponse = new byte[1024];
+                    WebSocketReceiveResult result = await _wsClient.ReceiveAsync(closeResponse, new CancellationTokenSource(SHIPMessageTimeout.CMI_TIMEOUT).Token).ConfigureAwait(false);
+                    if (result.MessageType == WebSocketMessageType.Close)
+                    {
+                        return await Disconnect().ConfigureAwait(false);
+                    }
+
+                    if ((result.Count < 2) || (closeResponse[0] != SHIPMessageType.END))
+                    {
+                        throw new Exception("Close message expected!");
+                    }
+
+                    byte[] closeResponseMessageBuffer = new byte[result.Count - 1];
+                    Buffer.BlockCopy(closeResponse, 1, closeResponseMessageBuffer, 0, result.Count - 1);
+
+                    var settings = new JsonSerializerSettings
+                    {
+                        NullValueHandling = NullValueHandling.Include,
+                        MissingMemberHandling = MissingMemberHandling.Error
+                    };
+
+                    SHIPCloseMessage closeMessageReceived = JsonConvert.DeserializeObject<SHIPCloseMessage>(Encoding.UTF8.GetString(closeResponseMessageBuffer), settings);
+                    if (closeMessageReceived == null)
+                    {
+                        throw new Exception("Close message parsing failed!");
+                    }
+
+                    if (closeMessageReceived.connectionClose.phase != ConnectionClosePhaseType.confirm)
+                    {
+                        throw new Exception("Close confirmation message expected!");
+                    }
+
+                    // now close websocket
                     await _wsClient.CloseAsync(WebSocketCloseStatus.NormalClosure, null, CancellationToken.None).ConfigureAwait(false);
                     _wsClient.Dispose();
                     _wsClient = null;

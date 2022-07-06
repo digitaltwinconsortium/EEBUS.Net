@@ -15,6 +15,8 @@ namespace EEBUS.Models
 
         public string Error { get; set; }
 
+        public string LatestDataReceived { get; set; }
+
         public override bool Equals(object obj)
         {
             if ((obj == null) || !this.GetType().Equals(obj.GetType()))

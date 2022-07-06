@@ -21,6 +21,16 @@ namespace EEBUS.Enums
         public DataType data { get; set; } = new DataType();
     }
 
+    public class SHIPCloseMessage
+    {
+        public ConnectionCloseType connectionClose { get; set; } = new ConnectionCloseType();
+    }
+
+    public class SHIPAccessMethodsMessage
+    {
+        public AccessMethodsType accessMethodsRequest { get; set; } = new AccessMethodsType();
+    }
+
     public class SHIPMessageType
     {
         public const byte INIT = 0;
