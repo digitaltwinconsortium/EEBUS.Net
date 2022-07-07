@@ -144,90 +144,73 @@ namespace EEBUS
                             // there are 6 control messages defined: Hello, ProtocolHandshake, ProtocolHandShakeError, AccessMethodsRequest, PINVerification and PINVerificationError
                             // Note: We ignore PINVerification and PINVerificationError messages
                             bool controlMessageHandled = false;
-
-                            SHIPHelloMessage helloMessageReceived = null;
-                            try
+                            
+                            string messageString = Encoding.UTF8.GetString(messageBuffer);
+                            if (string.IsNullOrEmpty(messageString))
                             {
-                                helloMessageReceived = JsonConvert.DeserializeObject<SHIPHelloMessage>(Encoding.UTF8.GetString(messageBuffer), jsonSettings);
-                            }
-                            catch (Exception ex)
-                            {
-                                Console.WriteLine("Exception: " + ex.Message);
+                                throw new Exception("Could not parse message string!");
                             }
 
-                            if ((helloMessageReceived != null) && (helloMessageReceived.connectionHello != null))
+                            if (messageString.StartsWith("{\"connectionHello\":"))
                             {
-                                Console.WriteLine($"Hello message received from {connectedNodeName}.");
-
-                                if (!await HandleHelloMessage(webSocket, helloMessageReceived.connectionHello).ConfigureAwait(false))
+                                SHIPHelloMessage helloMessageReceived = helloMessageReceived = JsonConvert.DeserializeObject<SHIPHelloMessage>(messageString, jsonSettings);
+                                if ((helloMessageReceived != null) && (helloMessageReceived.connectionHello != null))
                                 {
-                                    throw new Exception("Hello aborted!");
+                                    Console.WriteLine($"Hello message received from {connectedNodeName}.");
+
+                                    if (!await HandleHelloMessage(webSocket, helloMessageReceived.connectionHello).ConfigureAwait(false))
+                                    {
+                                        throw new Exception("Hello aborted!");
+                                    }
+
+                                    controlMessageHandled = true;
                                 }
-
-                                controlMessageHandled = true;
                             }
 
-                            SHIPHandshakeMessage handshakeMessageReceived = null;
-                            try
+                            if (messageString.StartsWith("{\"messageProtocolHandshake\":"))
                             {
-                                handshakeMessageReceived = JsonConvert.DeserializeObject<SHIPHandshakeMessage>(Encoding.UTF8.GetString(messageBuffer), jsonSettings);
-                            }
-                            catch (Exception ex)
-                            {
-                                Console.WriteLine("Exception: " + ex.Message);
-                            }
+                                SHIPHandshakeMessage handshakeMessageReceived = JsonConvert.DeserializeObject<SHIPHandshakeMessage>(Encoding.UTF8.GetString(messageBuffer), jsonSettings);
 
-                            if ((handshakeMessageReceived != null) && (handshakeMessageReceived.messageProtocolHandshake != null))
-                            {
-                                Console.WriteLine($"Handshake message received from {connectedNodeName}.");
-
-                                if (!await HandleHandshakeMessage(webSocket, handshakeMessageReceived.messageProtocolHandshake).ConfigureAwait(false))
+                                if ((handshakeMessageReceived != null) && (handshakeMessageReceived.messageProtocolHandshake != null))
                                 {
+                                    Console.WriteLine($"Handshake message received from {connectedNodeName}.");
+
+                                    if (!await HandleHandshakeMessage(webSocket, handshakeMessageReceived.messageProtocolHandshake).ConfigureAwait(false))
+                                    {
+                                        throw new Exception("Handshake aborted!");
+                                    }
+
+                                    controlMessageHandled = true;
+                                }
+                            }
+
+                            if (messageString.StartsWith("{\"messageProtocolHandshakeError\":"))
+                            {
+                                SHIPHandshakeErrorMessage handshakeErrorMessageReceived = JsonConvert.DeserializeObject<SHIPHandshakeErrorMessage>(Encoding.UTF8.GetString(messageBuffer), jsonSettings);
+                                if ((handshakeErrorMessageReceived != null) && (handshakeErrorMessageReceived.messageProtocolHandshakeError != null))
+                                {
+                                    Console.WriteLine($"Handshake error message received from {connectedNodeName} due to {handshakeErrorMessageReceived.messageProtocolHandshakeError.error}.");
+
+                                    controlMessageHandled = true;
+
                                     throw new Exception("Handshake aborted!");
                                 }
-
-                                controlMessageHandled = true;
                             }
 
-                            SHIPHandshakeErrorMessage handshakeErrorMessageReceived = null;
-                            try
+                            if (messageString.StartsWith("{\"accessMethodsRequest\":"))
                             {
-                                handshakeErrorMessageReceived = JsonConvert.DeserializeObject<SHIPHandshakeErrorMessage>(Encoding.UTF8.GetString(messageBuffer), jsonSettings);
-                            }
-                            catch (Exception ex)
-                            {
-                                Console.WriteLine("Exception: " + ex.Message);
-                            }
-
-                            if ((handshakeErrorMessageReceived != null) && (handshakeErrorMessageReceived.messageProtocolHandshakeError != null))
-                            {
-                                Console.WriteLine($"Handshake error message received from {connectedNodeName} due to {handshakeErrorMessageReceived.messageProtocolHandshakeError.error}.");
-
-                                controlMessageHandled = true;
-
-                                throw new Exception("Handshake aborted!");
-                            }
-
-                            SHIPAccessMethodsMessage accessMethodsMessageReceived = null;
-                            try
-                            {
-                                accessMethodsMessageReceived = JsonConvert.DeserializeObject<SHIPAccessMethodsMessage>(Encoding.UTF8.GetString(messageBuffer), jsonSettings);
-                            }
-                            catch (Exception ex)
-                            {
-                                Console.WriteLine("Exception: " + ex.Message);
-                            }
-
-                            if ((accessMethodsMessageReceived != null) && (accessMethodsMessageReceived.accessMethodsRequest != null))
-                            {
-                                Console.WriteLine($"Access Methods message received from {connectedNodeName}.");
-
-                                if (!HandleAccessMethodsMessage(connectedNodeName, webSocket, accessMethodsMessageReceived.accessMethodsRequest))
+                                SHIPAccessMethodsMessage accessMethodsMessageReceived = JsonConvert.DeserializeObject<SHIPAccessMethodsMessage>(Encoding.UTF8.GetString(messageBuffer), jsonSettings);
+                                if ((accessMethodsMessageReceived != null) && (accessMethodsMessageReceived.accessMethodsRequest != null))
                                 {
-                                    throw new Exception("Access methods received message aborted!");
-                                }
+                                    Console.WriteLine($"Access Methods message received from {connectedNodeName}.");
 
-                                controlMessageHandled = true;
+                                    if (!HandleAccessMethodsMessage(connectedNodeName, webSocket, accessMethodsMessageReceived.accessMethodsRequest))
+                                    {
+                                        throw new Exception("Access methods received message aborted!");
+                                    }
+
+                                    controlMessageHandled = true;
+                                }
                             }
 
                             if (!controlMessageHandled)
