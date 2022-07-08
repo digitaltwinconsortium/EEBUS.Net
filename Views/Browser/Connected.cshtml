@@ -23,8 +23,8 @@
     {
         <div>
             <p/>
-            <form method="post" enctype="multipart/form-data" asp-controller="Browser" asp-action="SendData">
-                <input name="EEBUS: @Model.Name @Model.Id @Model.Url" class="btn btn-primary" type="submit" value="Send Data">
+            <form method="post" enctype="multipart/form-data" asp-controller="Browser" asp-action="SendTestData">
+                <input name="EEBUS: @Model.Name @Model.Id @Model.Url" class="btn btn-primary" type="submit" value="Send Test Data">
             </form>
             <p/>
             Last Data Message Received: @Model.LatestDataReceived

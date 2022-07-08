@@ -143,7 +143,12 @@ namespace EEBUS.Controllers
         }
 
         [HttpPost]
-        public async Task<IActionResult> SendData()
+        public async Task<IActionResult> SendTestData()
+        {
+            return await SendData("SPINE test data").ConfigureAwait(false);
+        }
+
+        private async Task<IActionResult> SendData(object payload)
         {
             try
             {
@@ -165,7 +170,7 @@ namespace EEBUS.Controllers
                     SHIPDataMessage dataMessage = new SHIPDataMessage();
                     dataMessage.data.header = new HeaderType();
                     dataMessage.data.header.protocolId = "spine";
-                    dataMessage.data.payload = "spine test message";
+                    dataMessage.data.payload = payload;
                     
                     byte[] dataMessageSerialized = Encoding.UTF8.GetBytes(JsonConvert.SerializeObject(dataMessage));
                     byte[] dataMessageBuffer = new byte[dataMessageSerialized.Length + 1];
