@@ -13,13 +13,13 @@ using System.Threading.Tasks;
 
 namespace EEBUS
 {
-    public class WebsocketJsonMiddleware
+    public class SHIPMiddleware
     {
         private readonly RequestDelegate _next;
         private ConcurrentDictionary<string, WebSocket> connectedNodes = new ConcurrentDictionary<string, WebSocket>();
 
 
-        public WebsocketJsonMiddleware(RequestDelegate next)
+        public SHIPMiddleware(RequestDelegate next)
         {
             _next = next;
         }
@@ -516,10 +516,9 @@ namespace EEBUS
 
         private async Task<bool> HandleSpineMessage(WebSocket webSocket, object payload)
         {
-            // sinply print the SPINE payload to the console for now
             Console.WriteLine($"SPINE data received: {payload}.");
 
-            // send the same message back for now
+            // TODO: Send the same message back for now
             return await SendDataMessage(webSocket, payload).ConfigureAwait(false);
         }
 

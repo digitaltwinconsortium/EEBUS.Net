@@ -61,6 +61,7 @@ namespace EEBUS
 
             services.AddSingleton<MDNSClient>();
             services.AddSingleton<MDNSService>();
+            services.AddSingleton<SPINE>();
         }
 
         // This method gets called by the runtime. Use this method to configure the HTTP request pipeline.
@@ -93,7 +94,7 @@ namespace EEBUS
 
             app.UseWebSockets(webSocketOptions);
 
-            app.UseMiddleware<WebsocketJsonMiddleware>();
+            app.UseMiddleware<SHIPMiddleware>();
 
             // configure our EEBUS mDNS properties
             mDNSService.AddProperty("id", "ID:MICROSOFT-Azure-EEBUS-Gateway-100;");

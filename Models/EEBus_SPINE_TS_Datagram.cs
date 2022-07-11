@@ -35192,12 +35192,12 @@ public partial class PayloadType {
 [System.Xml.Serialization.XmlRootAttribute("datagram", Namespace="http://docs.eebus.org/spine/xsd/v1", IsNullable=false)]
 public partial class DatagramType {
     
-    private HeaderType headerField;
+    private SpineHeaderType headerField;
     
     private CmdType[] payloadField;
     
     /// <remarks/>
-    public HeaderType header {
+    public SpineHeaderType header {
         get {
             return this.headerField;
         }

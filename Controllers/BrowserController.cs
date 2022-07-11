@@ -148,6 +148,25 @@ namespace EEBUS.Controllers
             return await SendData("SPINE test data").ConfigureAwait(false);
         }
 
+        [HttpPost]
+        public async Task<IActionResult> SendSPINEData(SPINE spine)
+        {
+            foreach (string key in Request.Form.Keys)
+            {
+                if (key.Contains("EEBUS:"))
+                {
+                    string[] parts = key.Split(' ');
+                    _model.Name = parts[1];
+                    _model.Id = parts[2];
+                    _model.Url = parts[3];
+                    break;
+                }
+            }
+
+            return await SendData(spine.GenerateDatagram(_model.Url)).ConfigureAwait(false);
+        }
+
+
         private async Task<IActionResult> SendData(object payload)
         {
             try
