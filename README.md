@@ -1,7 +1,7 @@
 
 # EEBUS.Net
 
-EEBUS protocol reference implementation leveraging the .Net Framework
+[EEBUS protocol](https://www.eebus.org) reference implementation leveraging the .Net Framework
 
 ## Getting Started
 
